@@ -21,6 +21,7 @@ class KeyboardLayout final {
 public:
     [[nodiscard]] static const std::vector<KeyPosition>& usStudio();
     [[nodiscard]] static std::vector<std::uint8_t> demoProfile();
+    [[nodiscard]] static std::vector<std::uint8_t> usWindowsFactoryProfile();
 };
 
 }  // namespace hhkbs::keymap

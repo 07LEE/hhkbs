@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <span>
 #include <string_view>
+#include <utility>
 
 namespace hhkbs::keymap {
 namespace {
@@ -14,6 +15,18 @@ struct KeyDefinition {
     float width;
     Keymap::ScanCode scanCode;
 };
+
+void setScanCode(
+    std::vector<std::uint8_t>& bytes,
+    const std::size_t layer,
+    const std::size_t slot,
+    const Keymap::ScanCode scanCode)
+{
+    const auto offset = (layer * Keymap::layerByteCount)
+        + (slot * Keymap::scanCodeByteCount);
+    bytes[offset] = static_cast<std::uint8_t>(scanCode >> 8U);
+    bytes[offset + 1] = static_cast<std::uint8_t>(scanCode & 0xFFU);
+}
 
 void appendRow(
     std::vector<KeyPosition>& positions,
@@ -140,13 +153,104 @@ const std::vector<KeyPosition>& KeyboardLayout::usStudio()
 
 std::vector<std::uint8_t> KeyboardLayout::demoProfile()
 {
+    return usWindowsFactoryProfile();
+}
+
+std::vector<std::uint8_t> KeyboardLayout::usWindowsFactoryProfile()
+{
     std::vector<std::uint8_t> bytes(Keymap::profileByteCount, 0);
-    for (const auto& position : usStudio()) {
-        const auto offset = position.slot * Keymap::scanCodeByteCount;
-        bytes[offset] = static_cast<std::uint8_t>(position.defaultScanCode >> 8U);
-        bytes[offset + 1] =
-            static_cast<std::uint8_t>(position.defaultScanCode & 0xFFU);
+
+    for (std::size_t layer = 0; layer < Keymap::layerCount; ++layer) {
+        for (const auto& position : usStudio()) {
+            setScanCode(bytes, layer, position.slot, position.defaultScanCode);
+        }
+
+        setScanCode(bytes, layer, 28, 0x004C);
+        setScanCode(bytes, layer, 29, 0x002A);
+        setScanCode(bytes, layer, 79, 0x00F4);
+        setScanCode(bytes, layer, 80, 0x5102);
+        setScanCode(bytes, layer, 81, 0x00F6);
+        setScanCode(bytes, layer, 86, 0x0052);
+        setScanCode(bytes, layer, 87, 0x0051);
+        setScanCode(bytes, layer, 101, 0x0050);
+        setScanCode(bytes, layer, 102, 0x004F);
+        setScanCode(bytes, layer, 108, 0x5F8C);
+        setScanCode(bytes, layer, 109, 0x5F8D);
+        setScanCode(bytes, layer, 116, 0x00F9);
+        setScanCode(bytes, layer, 117, 0x00FA);
     }
+
+    constexpr std::array fn1Overrides{
+        std::pair<std::size_t, Keymap::ScanCode>{0, 0x00A5},
+        std::pair<std::size_t, Keymap::ScanCode>{1, 0x003A},
+        std::pair<std::size_t, Keymap::ScanCode>{2, 0x003B},
+        std::pair<std::size_t, Keymap::ScanCode>{3, 0x003C},
+        std::pair<std::size_t, Keymap::ScanCode>{4, 0x003D},
+        std::pair<std::size_t, Keymap::ScanCode>{5, 0x003E},
+        std::pair<std::size_t, Keymap::ScanCode>{6, 0x003F},
+        std::pair<std::size_t, Keymap::ScanCode>{7, 0x0040},
+        std::pair<std::size_t, Keymap::ScanCode>{8, 0x0041},
+        std::pair<std::size_t, Keymap::ScanCode>{9, 0x0042},
+        std::pair<std::size_t, Keymap::ScanCode>{10, 0x0043},
+        std::pair<std::size_t, Keymap::ScanCode>{11, 0x0044},
+        std::pair<std::size_t, Keymap::ScanCode>{12, 0x0045},
+        std::pair<std::size_t, Keymap::ScanCode>{13, 0x0049},
+        std::pair<std::size_t, Keymap::ScanCode>{14, 0x004C},
+        std::pair<std::size_t, Keymap::ScanCode>{15, 0x0039},
+        std::pair<std::size_t, Keymap::ScanCode>{23, 0x0046},
+        std::pair<std::size_t, Keymap::ScanCode>{24, 0x0047},
+        std::pair<std::size_t, Keymap::ScanCode>{25, 0x0048},
+        std::pair<std::size_t, Keymap::ScanCode>{26, 0x0052},
+        std::pair<std::size_t, Keymap::ScanCode>{28, 0x002A},
+        std::pair<std::size_t, Keymap::ScanCode>{31, 0x00AA},
+        std::pair<std::size_t, Keymap::ScanCode>{32, 0x00A9},
+        std::pair<std::size_t, Keymap::ScanCode>{33, 0x00A8},
+        std::pair<std::size_t, Keymap::ScanCode>{34, 0x00B0},
+        std::pair<std::size_t, Keymap::ScanCode>{36, 0x0055},
+        std::pair<std::size_t, Keymap::ScanCode>{37, 0x0054},
+        std::pair<std::size_t, Keymap::ScanCode>{38, 0x004A},
+        std::pair<std::size_t, Keymap::ScanCode>{39, 0x004B},
+        std::pair<std::size_t, Keymap::ScanCode>{40, 0x0050},
+        std::pair<std::size_t, Keymap::ScanCode>{41, 0x004F},
+        std::pair<std::size_t, Keymap::ScanCode>{44, 0x0058},
+        std::pair<std::size_t, Keymap::ScanCode>{51, 0x0057},
+        std::pair<std::size_t, Keymap::ScanCode>{52, 0x0056},
+        std::pair<std::size_t, Keymap::ScanCode>{53, 0x004D},
+        std::pair<std::size_t, Keymap::ScanCode>{54, 0x004E},
+        std::pair<std::size_t, Keymap::ScanCode>{55, 0x0051},
+        std::pair<std::size_t, Keymap::ScanCode>{68, 0x0078},
+    };
+    for (const auto& [slot, scanCode] : fn1Overrides) {
+        setScanCode(bytes, 1, slot, scanCode);
+    }
+
+    constexpr std::array fn2Overrides{
+        std::pair<std::size_t, Keymap::ScanCode>{1, 0x5FA4},
+        std::pair<std::size_t, Keymap::ScanCode>{2, 0x5FA5},
+        std::pair<std::size_t, Keymap::ScanCode>{3, 0x5FA6},
+        std::pair<std::size_t, Keymap::ScanCode>{4, 0x5FA7},
+        std::pair<std::size_t, Keymap::ScanCode>{6, 0x5F9E},
+        std::pair<std::size_t, Keymap::ScanCode>{7, 0x5F9F},
+        std::pair<std::size_t, Keymap::ScanCode>{8, 0x5FA0},
+        std::pair<std::size_t, Keymap::ScanCode>{9, 0x5FA1},
+        std::pair<std::size_t, Keymap::ScanCode>{16, 0x005F},
+        std::pair<std::size_t, Keymap::ScanCode>{17, 0x0060},
+        std::pair<std::size_t, Keymap::ScanCode>{18, 0x0061},
+        std::pair<std::size_t, Keymap::ScanCode>{31, 0x005C},
+        std::pair<std::size_t, Keymap::ScanCode>{32, 0x005D},
+        std::pair<std::size_t, Keymap::ScanCode>{33, 0x005E},
+        std::pair<std::size_t, Keymap::ScanCode>{35, 0x5FA2},
+        std::pair<std::size_t, Keymap::ScanCode>{36, 0x00F5},
+        std::pair<std::size_t, Keymap::ScanCode>{46, 0x0059},
+        std::pair<std::size_t, Keymap::ScanCode>{47, 0x005A},
+        std::pair<std::size_t, Keymap::ScanCode>{48, 0x005B},
+        std::pair<std::size_t, Keymap::ScanCode>{50, 0x5FA3},
+        std::pair<std::size_t, Keymap::ScanCode>{65, 0x0062},
+    };
+    for (const auto& [slot, scanCode] : fn2Overrides) {
+        setScanCode(bytes, 2, slot, scanCode);
+    }
+
     return bytes;
 }
 

@@ -109,6 +109,21 @@ void studioLayoutHasUniqueEditableSlots()
         "layout contains duplicate profile slots");
 }
 
+void factoryProfileContainsAllDefaultLayers()
+{
+    const Keymap profile(hhkbs::keymap::KeyboardLayout::usWindowsFactoryProfile());
+
+    require(profile.scanCode(0, 0) == 0x0029, "base Escape default is incorrect");
+    require(profile.scanCode(0, 79) == 0x00F4, "mouse left default is incorrect");
+    require(profile.scanCode(0, 86) == 0x0052, "left gesture pad default is incorrect");
+    require(profile.scanCode(0, 108) == 0x5F8C, "front gesture pad default is incorrect");
+    require(profile.scanCode(1, 1) == 0x003A, "Fn1 F1 default is incorrect");
+    require(profile.scanCode(1, 31) == 0x00AA, "Fn1 volume default is incorrect");
+    require(profile.scanCode(2, 1) == 0x5FA4, "Fn2 pointer speed default is incorrect");
+    require(profile.scanCode(2, 36) == 0x00F5, "Fn2 mouse click default is incorrect");
+    require(profile.scanCode(3, 0) == 0x0029, "Fn3 base default is incorrect");
+}
+
 void tomlProfilesRoundTrip()
 {
     Keymap original(hhkbs::keymap::KeyboardLayout::demoProfile());
@@ -153,6 +168,7 @@ int main()
         invalidInputIsRejected();
         individualChangesAreTracked();
         studioLayoutHasUniqueEditableSlots();
+        factoryProfileContainsAllDefaultLayers();
         tomlProfilesRoundTrip();
         malformedTomlIsRejected();
     } catch (const std::exception& error) {

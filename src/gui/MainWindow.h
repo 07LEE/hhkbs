@@ -30,6 +30,7 @@ private:
     void editKey(std::size_t slot);
     void importProfile();
     [[nodiscard]] bool exportProfile();
+    void restoreFactoryDefaults();
     void discardChanges();
     [[nodiscard]] bool confirmDiscardChanges();
     void updateActions();
@@ -41,7 +42,8 @@ private:
     QPushButton* refreshButton_{};
     QPushButton* importButton_{};
     QPushButton* exportButton_{};
-    QPushButton* resetButton_{};
+    QPushButton* defaultsButton_{};
+    QPushButton* discardButton_{};
     QFrame* workspace_{};
     QLabel* profileSummary_{};
     KeyboardWidget* keyboardWidget_{};

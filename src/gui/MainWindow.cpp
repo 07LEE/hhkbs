@@ -148,7 +148,8 @@ void MainWindow::buildInterface()
     refreshButton_ = new QPushButton(QStringLiteral("Read from keyboard"));
     importButton_ = new QPushButton(QStringLiteral("Import"));
     exportButton_ = new QPushButton(QStringLiteral("Export"));
-    resetButton_ = new QPushButton(QStringLiteral("Discard changes"));
+    defaultsButton_ = new QPushButton(QStringLiteral("Restore defaults"));
+    discardButton_ = new QPushButton(QStringLiteral("Discard changes"));
     auto* applyButton = new QPushButton(QStringLiteral("Apply to keyboard"));
     applyButton->setObjectName(QStringLiteral("primaryButton"));
     applyButton->setEnabled(false);
@@ -164,7 +165,10 @@ void MainWindow::buildInterface()
     connect(exportButton_, &QPushButton::clicked, this, [this] {
         static_cast<void>(exportProfile());
     });
-    connect(resetButton_, &QPushButton::clicked, this, [this] {
+    connect(defaultsButton_, &QPushButton::clicked, this, [this] {
+        restoreFactoryDefaults();
+    });
+    connect(discardButton_, &QPushButton::clicked, this, [this] {
         discardChanges();
     });
     connect(layerTabs_, &QTabBar::currentChanged, this, [this](const int layer) {
@@ -178,7 +182,8 @@ void MainWindow::buildInterface()
     actionLayout->addWidget(importButton_);
     actionLayout->addWidget(exportButton_);
     actionLayout->addStretch();
-    actionLayout->addWidget(resetButton_);
+    actionLayout->addWidget(defaultsButton_);
+    actionLayout->addWidget(discardButton_);
     actionLayout->addWidget(applyButton);
     pageLayout->addLayout(actionLayout);
 
@@ -471,6 +476,38 @@ bool MainWindow::exportProfile()
     return true;
 }
 
+void MainWindow::restoreFactoryDefaults()
+{
+    if (!profileLoaded_) {
+        return;
+    }
+
+    const auto answer = QMessageBox::question(
+        this,
+        QStringLiteral("Restore factory defaults"),
+        QStringLiteral(
+            "Replace the editor contents with the HHKB Studio US Profile 1 "
+            "factory defaults?\n\nThe keyboard will not be changed until Apply to "
+            "keyboard is available and selected."),
+        QMessageBox::RestoreDefaults | QMessageBox::Cancel,
+        QMessageBox::Cancel);
+    if (answer != QMessageBox::RestoreDefaults) {
+        return;
+    }
+
+    const hhkbs::keymap::Keymap defaults(
+        hhkbs::keymap::KeyboardLayout::usWindowsFactoryProfile());
+    for (std::size_t layer = 0; layer < hhkbs::keymap::Keymap::layerCount; ++layer) {
+        for (std::size_t slot = 0;
+             slot < hhkbs::keymap::Keymap::keysPerLayer;
+             ++slot) {
+            keymap_.setScanCode(layer, slot, defaults.scanCode(layer, slot));
+        }
+    }
+    keyboardWidget_->update();
+    updateActions();
+}
+
 void MainWindow::discardChanges()
 {
     if (!profileLoaded_ || !keymap_.isModified()) {
@@ -510,7 +547,8 @@ void MainWindow::updateActions()
     refreshButton_->setEnabled(!busy_);
     importButton_->setEnabled(!busy_);
     exportButton_->setEnabled(!busy_ && profileLoaded_);
-    resetButton_->setEnabled(!busy_ && profileLoaded_ && keymap_.isModified());
+    defaultsButton_->setEnabled(!busy_ && profileLoaded_);
+    discardButton_->setEnabled(!busy_ && profileLoaded_ && keymap_.isModified());
 }
 
 void MainWindow::closeEvent(QCloseEvent* event)
