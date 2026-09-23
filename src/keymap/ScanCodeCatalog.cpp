@@ -199,4 +199,36 @@ std::string ScanCodeCatalog::labelFor(const Keymap::ScanCode code)
     return std::format("0x{:04X}", code);
 }
 
+std::string ScanCodeCatalog::compactLabelFor(const Keymap::ScanCode code)
+{
+    switch (code) {
+    case 0x002D:
+        return "-";
+    case 0x002E:
+        return "=";
+    case 0x002F:
+        return "[";
+    case 0x0030:
+        return "]";
+    case 0x0031:
+        return "\\";
+    case 0x0032:
+        return "#";
+    case 0x0033:
+        return ";";
+    case 0x0034:
+        return "'";
+    case 0x0035:
+        return "`";
+    case 0x0036:
+        return ",";
+    case 0x0037:
+        return ".";
+    case 0x0038:
+        return "/";
+    default:
+        return labelFor(code);
+    }
+}
+
 }  // namespace hhkbs::keymap

@@ -162,6 +162,12 @@ void tomlProfilesRoundTrip()
         hhkbs::keymap::ScanCodeCatalog::labelFor(0xABCD) == "0xABCD",
         "unknown scan code label is incorrect");
     require(
+        hhkbs::keymap::ScanCodeCatalog::compactLabelFor(0x0036) == ",",
+        "comma compact label is incorrect");
+    require(
+        hhkbs::keymap::ScanCodeCatalog::compactLabelFor(0x0034) == "'",
+        "apostrophe compact label is incorrect");
+    require(
         hhkbs::keymap::ScanCodeCatalog::labelFor(0x00F4) == "Mouse Left Click",
         "HHKB Studio mouse code label is incorrect");
     require(

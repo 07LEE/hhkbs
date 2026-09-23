@@ -15,7 +15,7 @@
 namespace {
 
 constexpr qreal layoutWidth = 17.8;
-constexpr qreal layoutHeight = 7.25;
+constexpr qreal layoutHeight = 6.1;
 constexpr qreal outerMargin = 18.0;
 
 }  // namespace
@@ -25,7 +25,7 @@ KeyboardWidget::KeyboardWidget(QWidget* parent)
 {
     setMouseTracking(true);
     setCursor(Qt::PointingHandCursor);
-    setMinimumHeight(400);
+    setMinimumHeight(340);
     setAccessibleName(QStringLiteral("HHKB Studio keymap"));
 }
 
@@ -47,7 +47,7 @@ void KeyboardWidget::setLayer(const std::size_t layer)
 
 QSize KeyboardWidget::sizeHint() const
 {
-    return {1080, 520};
+    return {1080, 440};
 }
 
 void KeyboardWidget::paintEvent(QPaintEvent* event)
@@ -98,12 +98,14 @@ void KeyboardWidget::paintEvent(QPaintEvent* event)
             QString::fromStdString(position.legend));
 
         QFont assignmentFont = font();
-        auto assignmentSize = std::max(9, static_cast<int>(unit * 0.18));
+        const auto assignmentLabel = QString::fromStdString(
+            hhkbs::keymap::ScanCodeCatalog::compactLabelFor(
+                keymap_->scanCode(layer_, position.slot)));
+        auto assignmentSize = assignmentLabel.size() == 1
+            ? std::max(12, static_cast<int>(unit * 0.26))
+            : std::max(9, static_cast<int>(unit * 0.18));
         assignmentFont.setPixelSize(assignmentSize);
         assignmentFont.setWeight(QFont::DemiBold);
-        const auto assignmentLabel = QString::fromStdString(
-            hhkbs::keymap::ScanCodeCatalog::labelFor(
-                keymap_->scanCode(layer_, position.slot)));
         while (assignmentSize > 8
                && QFontMetrics(assignmentFont).horizontalAdvance(assignmentLabel)
                    > rectangle.width() - 10) {

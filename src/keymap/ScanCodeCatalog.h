@@ -17,6 +17,7 @@ class ScanCodeCatalog final {
 public:
     [[nodiscard]] static const std::vector<ScanCodeEntry>& entries();
     [[nodiscard]] static std::string labelFor(Keymap::ScanCode code);
+    [[nodiscard]] static std::string compactLabelFor(Keymap::ScanCode code);
 };
 
 }  // namespace hhkbs::keymap

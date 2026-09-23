@@ -150,10 +150,10 @@ std::vector<KeyPosition> makeGesturePadLayout()
     return {
         {86, "Left side ↑", 0.0F, 1.35F, 1.15F, 0x0052},
         {87, "Left side ↓", 0.0F, 2.35F, 1.15F, 0x0051},
-        {101, "Front left ←", 4.20F, 6.25F, 1.55F, 0x0050},
-        {102, "Front left →", 5.75F, 6.25F, 1.55F, 0x004F},
-        {108, "Front right ←", 10.50F, 6.25F, 1.55F, 0x5F8C},
-        {109, "Front right →", 12.05F, 6.25F, 1.55F, 0x5F8D},
+        {101, "Front left ←", 3.55F, 5.25F, 1.55F, 0x0050},
+        {102, "Front left →", 5.10F, 5.25F, 1.55F, 0x004F},
+        {108, "Front right ←", 11.15F, 5.25F, 1.55F, 0x5F8C},
+        {109, "Front right →", 12.70F, 5.25F, 1.55F, 0x5F8D},
         {116, "Right side ↑", 16.65F, 1.35F, 1.15F, 0x00F9},
         {117, "Right side ↓", 16.65F, 2.35F, 1.15F, 0x00FA},
     };
