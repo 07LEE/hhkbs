@@ -1,199 +1,60 @@
 #include "gui/KeyboardWidget.h"
-
 #include "keymap/KeyboardLayout.h"
 #include "keymap/ScanCodeCatalog.h"
-
-#include <QEvent>
-#include <QFont>
-#include <QFontMetrics>
-#include <QMouseEvent>
-#include <QPainter>
-#include <QPaintEvent>
-
+#include <imgui.h>
 #include <algorithm>
+#include <string>
 
-namespace {
-
-constexpr qreal layoutWidth = 17.8;
-constexpr qreal layoutHeight = 6.1;
-constexpr qreal outerMargin = 18.0;
-
-}  // namespace
-
-KeyboardWidget::KeyboardWidget(QWidget* parent)
-    : QWidget(parent)
+std::optional<std::size_t> drawKeyboard(const hhkbs::keymap::Keymap& keymap,
+                                      std::size_t layer, float height)
 {
-    setMouseTracking(true);
-    setCursor(Qt::PointingHandCursor);
-    setMinimumHeight(340);
-    setAccessibleName(QStringLiteral("HHKB Studio keymap"));
-}
-
-void KeyboardWidget::setKeymap(const hhkbs::keymap::Keymap* keymap)
-{
-    keymap_ = keymap;
-    update();
-}
-
-void KeyboardWidget::setLayer(const std::size_t layer)
-{
-    if (layer >= hhkbs::keymap::Keymap::layerCount) {
-        return;
-    }
-    layer_ = layer;
-    hoveredSlot_.reset();
-    update();
-}
-
-QSize KeyboardWidget::sizeHint() const
-{
-    return {1080, 440};
-}
-
-void KeyboardWidget::paintEvent(QPaintEvent* event)
-{
-    QWidget::paintEvent(event);
-
-    QPainter painter(this);
-    painter.setRenderHint(QPainter::Antialiasing);
-
-    if (keymap_ == nullptr) {
-        return;
-    }
-
-    const auto paintPosition = [this, &painter](
-                                   const hhkbs::keymap::KeyPosition& position,
-                                   const bool gesturePad) {
-        const auto rectangle = keyRect(position);
-        const auto modified = keymap_->isKeyModified(layer_, position.slot);
-        const auto hovered = hoveredSlot_ && *hoveredSlot_ == position.slot;
-
-        QColor background = gesturePad
-            ? QColor(QStringLiteral("#f7f4ff"))
-            : QColor(QStringLiteral("#f8f9fb"));
-        QColor border = gesturePad
-            ? QColor(QStringLiteral("#c9c0e8"))
-            : QColor(QStringLiteral("#cbd1da"));
-        if (modified) {
-            background = QColor(QStringLiteral("#e5efff"));
-            border = QColor(QStringLiteral("#2b6de5"));
-        } else if (hovered) {
-            background = QColor(QStringLiteral("#eef2f8"));
-            border = QColor(QStringLiteral("#8d98a8"));
+    std::optional<std::size_t> activated;
+    ImGui::BeginChild("Keyboard", ImVec2(0, height), ImGuiChildFlags_Borders,
+                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+    const auto available = ImGui::GetContentRegionAvail();
+    const float unit = std::max(1.0f, std::min(available.x / 17.8f, available.y / 6.1f));
+    const auto start = ImGui::GetCursorScreenPos();
+    const ImVec2 origin(start.x + (available.x - unit * 17.8f) / 2,
+                        start.y + (available.y - unit * 6.1f) / 2);
+    auto* draw = ImGui::GetWindowDrawList();
+    const auto key = [&](const hhkbs::keymap::KeyPosition& pos, bool gesture) {
+        const ImVec2 top(origin.x + pos.x * unit + 3, origin.y + pos.y * unit + 3);
+        const ImVec2 size(pos.width * unit - 6, unit * .82f - 3);
+        const ImVec2 bottom(top.x + size.x, top.y + size.y);
+        ImGui::SetCursorScreenPos(top);
+        ImGui::PushID(static_cast<int>(pos.slot));
+        if (ImGui::InvisibleButton("key", size, ImGuiButtonFlags_EnableNav)) activated = pos.slot;
+        const bool hovered = ImGui::IsItemHovered() || ImGui::IsItemFocused();
+        const bool changed = keymap.isKeyModified(layer, pos.slot);
+        const auto background = changed ? IM_COL32(220,234,255,255) :
+            hovered ? IM_COL32(226,232,242,255) : gesture ? IM_COL32(244,239,255,255) : IM_COL32(248,249,251,255);
+        const auto border = changed ? IM_COL32(43,109,229,255) :
+            gesture ? IM_COL32(191,178,225,255) : IM_COL32(199,208,221,255);
+        draw->AddRectFilled(top, bottom, background, 6);
+        draw->AddRect(top, bottom, border, 6, 0, changed ? 2.f : 1.f);
+        const auto& legend = pos.legend;
+        const float legendSize = std::clamp(unit * .16f, 9.f, 13.f);
+        draw->PushClipRect(top, bottom, true);
+        draw->AddText(ImGui::GetFont(), legendSize, ImVec2(top.x+5, top.y+4),
+                      IM_COL32(112,121,136,255), legend.c_str());
+        const auto label = hhkbs::keymap::ScanCodeCatalog::compactLabelFor(keymap.scanCode(layer, pos.slot));
+        float fontSize = std::clamp(unit * .24f, 11.f, 19.f);
+        auto extent = ImGui::GetFont()->CalcTextSizeA(fontSize, 1000, 0, label.c_str());
+        if (extent.x > size.x-8) fontSize *= (size.x-8)/extent.x;
+        extent = ImGui::GetFont()->CalcTextSizeA(fontSize, 1000, 0, label.c_str());
+        draw->AddText(ImGui::GetFont(), fontSize,
+                      ImVec2(top.x+(size.x-extent.x)/2, top.y+(size.y-extent.y)/2+6),
+                      IM_COL32(32,40,53,255), label.c_str());
+        draw->PopClipRect();
+        if (changed) draw->AddCircleFilled(ImVec2(bottom.x-6, top.y+6), 2.5f, border);
+        if (hovered) {
+            const auto description = hhkbs::keymap::ScanCodeCatalog::labelFor(keymap.scanCode(layer, pos.slot));
+            ImGui::SetTooltip("%s: %s (0x%04X)", legend.c_str(), description.c_str(), keymap.scanCode(layer,pos.slot));
         }
-
-        painter.setPen(QPen(border, modified ? 2.0 : 1.0));
-        painter.setBrush(background);
-        painter.drawRoundedRect(rectangle, 7.0, 7.0);
-
-        const auto unit = rectangle.height() / 0.82;
-        QFont legendFont = font();
-        legendFont.setPixelSize(std::max(8, static_cast<int>(unit * 0.14)));
-        painter.setFont(legendFont);
-        painter.setPen(QColor(QStringLiteral("#7a8492")));
-        const QRectF legendRect = rectangle.adjusted(8, 5, -6, -4);
-        painter.drawText(
-            legendRect,
-            Qt::AlignLeft | Qt::AlignTop,
-            QString::fromStdString(position.legend));
-
-        QFont assignmentFont = font();
-        const auto assignmentLabel = QString::fromStdString(
-            hhkbs::keymap::ScanCodeCatalog::compactLabelFor(
-                keymap_->scanCode(layer_, position.slot)));
-        auto assignmentSize = assignmentLabel.size() == 1
-            ? std::max(12, static_cast<int>(unit * 0.26))
-            : std::max(9, static_cast<int>(unit * 0.18));
-        assignmentFont.setPixelSize(assignmentSize);
-        assignmentFont.setWeight(QFont::DemiBold);
-        while (assignmentSize > 8
-               && QFontMetrics(assignmentFont).horizontalAdvance(assignmentLabel)
-                   > rectangle.width() - 10) {
-            assignmentFont.setPixelSize(--assignmentSize);
-        }
-        painter.setFont(assignmentFont);
-        painter.setPen(QColor(QStringLiteral("#20242a")));
-        painter.drawText(
-            rectangle.adjusted(5, 14, -5, -3),
-            Qt::AlignCenter,
-            assignmentLabel);
-
-        if (modified) {
-            painter.setPen(Qt::NoPen);
-            painter.setBrush(QColor(QStringLiteral("#2b6de5")));
-            painter.drawEllipse(
-                QPointF(rectangle.right() - 7, rectangle.top() + 7),
-                3,
-                3);
-        }
+        ImGui::PopID();
     };
-
-    for (const auto& key : hhkbs::keymap::KeyboardLayout::usStudio()) {
-        paintPosition(key, false);
-    }
-    for (const auto& direction : hhkbs::keymap::KeyboardLayout::gesturePads()) {
-        paintPosition(direction, true);
-    }
-}
-
-void KeyboardWidget::mouseMoveEvent(QMouseEvent* event)
-{
-    const auto slot = slotAt(event->position());
-    if (slot != hoveredSlot_) {
-        hoveredSlot_ = slot;
-        update();
-    }
-}
-
-void KeyboardWidget::mousePressEvent(QMouseEvent* event)
-{
-    if (event->button() != Qt::LeftButton || keymap_ == nullptr) {
-        return;
-    }
-    if (const auto slot = slotAt(event->position())) {
-        emit keyActivated(*slot);
-    }
-}
-
-void KeyboardWidget::leaveEvent(QEvent* event)
-{
-    QWidget::leaveEvent(event);
-    hoveredSlot_.reset();
-    update();
-}
-
-QRectF KeyboardWidget::keyRect(const hhkbs::keymap::KeyPosition& key) const
-{
-    const auto availableWidth = std::max(1.0, width() - (outerMargin * 2));
-    const auto availableHeight = std::max(1.0, height() - (outerMargin * 2));
-    const auto unit =
-        std::min(availableWidth / layoutWidth, availableHeight / layoutHeight);
-    const auto originX = (width() - (layoutWidth * unit)) / 2.0;
-    const auto originY = (height() - (layoutHeight * unit)) / 2.0;
-    constexpr qreal gap = 3.0;
-
-    return {
-        originX + (key.x * unit) + gap,
-        originY + (key.y * unit) + gap,
-        (key.width * unit) - (gap * 2),
-        (unit * 0.82) - gap,
-    };
-}
-
-std::optional<std::size_t> KeyboardWidget::slotAt(const QPointF& point) const
-{
-    if (keymap_ == nullptr) {
-        return std::nullopt;
-    }
-    for (const auto& key : hhkbs::keymap::KeyboardLayout::usStudio()) {
-        if (keyRect(key).contains(point)) {
-            return key.slot;
-        }
-    }
-    for (const auto& direction : hhkbs::keymap::KeyboardLayout::gesturePads()) {
-        if (keyRect(direction).contains(point)) {
-            return direction.slot;
-        }
-    }
-    return std::nullopt;
+    for (const auto& pos : hhkbs::keymap::KeyboardLayout::usStudio()) key(pos, false);
+    for (const auto& pos : hhkbs::keymap::KeyboardLayout::gesturePads()) key(pos, true);
+    ImGui::EndChild();
+    return activated;
 }

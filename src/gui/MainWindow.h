@@ -1,53 +1,51 @@
 #pragma once
-
+#include "gui/KeyAssignmentDialog.h"
 #include "keymap/Keymap.h"
+#include <array>
+#include <filesystem>
+#include <future>
+#include <string>
+#include <vector>
 
-#include <QMainWindow>
-
-class QFrame;
-class QCloseEvent;
-class QLabel;
-class QPushButton;
-class QTabBar;
-class KeyboardWidget;
-
-class MainWindow final : public QMainWindow {
+class MainWindow final {
 public:
-    explicit MainWindow(bool demoMode = false, QWidget* parent = nullptr);
-
-protected:
-    void closeEvent(QCloseEvent* event) override;
-
+    explicit MainWindow(bool demoMode = false);
+    void draw();
+    void requestClose();
+    [[nodiscard]] bool shouldClose() const { return close_; }
 private:
-    struct ScanResult;
+    enum class Action { None, Read, Import, Close };
+    enum class Dialog { None, Assign, Unsaved, Import, Export, Overwrite, Defaults };
+    struct ScanResult {
+        std::string status;
+        std::string detail;
+        std::vector<std::uint8_t> bytes;
+    };
+    void beginScan();
+    void pollScan();
+    void request(Action action);
+    void perform(Action action);
+    void openFiles(bool save);
+    void drawDialog();
+    void drawFiles();
+    void saveFile(bool overwrite);
+    void finishDialog();
+    [[nodiscard]] bool unsaved() const;
 
-    void buildInterface();
-    void beginDeviceScan();
-    void applyScanResult(ScanResult result);
-    void setBusy(bool busy);
-    void showEditor(const QString& summary);
-    void showPlaceholder(const QString& title, const QString& body);
-    void editKey(std::size_t slot);
-    void importProfile();
-    [[nodiscard]] bool exportProfile();
-    void restoreFactoryDefaults();
-    void discardChanges();
-    [[nodiscard]] bool confirmDiscardChanges();
-    void updateActions();
-
-    QLabel* connectionStatus_{};
-    QLabel* workspaceTitle_{};
-    QLabel* workspaceBody_{};
-    QTabBar* layerTabs_{};
-    QPushButton* refreshButton_{};
-    QPushButton* importButton_{};
-    QPushButton* exportButton_{};
-    QPushButton* defaultsButton_{};
-    QPushButton* discardButton_{};
-    QFrame* workspace_{};
-    QLabel* profileSummary_{};
-    KeyboardWidget* keyboardWidget_{};
     hhkbs::keymap::Keymap keymap_;
-    bool busy_{};
-    bool profileLoaded_{};
+    std::vector<std::uint8_t> savedBytes_;
+    std::future<ScanResult> scan_;
+    std::string status_ = "No device";
+    std::string summary_;
+    std::string message_;
+    std::string dialogError_;
+    bool loaded_ = false;
+    bool close_ = false;
+    std::size_t layer_ = 0;
+    std::size_t slot_ = 0;
+    Dialog dialog_ = Dialog::None;
+    Action pending_ = Action::None;
+    KeyAssignmentDialog assignment_;
+    std::array<char, 4096> path_{};
+    std::filesystem::path directory_;
 };

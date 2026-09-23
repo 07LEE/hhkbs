@@ -1,27 +1,13 @@
 #pragma once
-
 #include "keymap/Keymap.h"
+#include <array>
+#include <optional>
 
-#include <QDialog>
-
-class QLineEdit;
-class QListWidget;
-
-class KeyAssignmentDialog final : public QDialog {
+class KeyAssignmentDialog {
 public:
-    explicit KeyAssignmentDialog(
-        hhkbs::keymap::Keymap::ScanCode currentCode,
-        QWidget* parent = nullptr);
-
-    [[nodiscard]] hhkbs::keymap::Keymap::ScanCode selectedScanCode() const noexcept;
-
+    void reset(hhkbs::keymap::Keymap::ScanCode code);
+    std::optional<hhkbs::keymap::Keymap::ScanCode> draw();
 private:
-    void populate();
-    void filterItems(const QString& query);
-    void acceptSelection();
-
-    QLineEdit* searchEdit_{};
-    QLineEdit* customCodeEdit_{};
-    QListWidget* list_{};
-    hhkbs::keymap::Keymap::ScanCode selectedCode_{};
+    std::array<char, 128> search_{};
+    std::array<char, 16> raw_{};
 };

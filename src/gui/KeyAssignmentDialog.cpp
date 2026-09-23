@@ -1,131 +1,53 @@
 #include "gui/KeyAssignmentDialog.h"
-
 #include "keymap/ScanCodeCatalog.h"
+#include <imgui.h>
+#include <algorithm>
+#include <charconv>
+#include <cctype>
+#include <cstdio>
+#include <string>
 
-#include <QDialogButtonBox>
-#include <QLabel>
-#include <QLineEdit>
-#include <QListWidget>
-#include <QListWidgetItem>
-#include <QMessageBox>
-#include <QRegularExpression>
-#include <QRegularExpressionValidator>
-#include <QVBoxLayout>
-
-KeyAssignmentDialog::KeyAssignmentDialog(
-    const hhkbs::keymap::Keymap::ScanCode currentCode,
-    QWidget* parent)
-    : QDialog(parent)
-    , selectedCode_(currentCode)
-{
-    setWindowTitle(QStringLiteral("Assign input"));
-    setMinimumSize(460, 540);
-
-    auto* layout = new QVBoxLayout(this);
-    auto* instruction = new QLabel(
-        QStringLiteral("Choose a key or device function, or enter a raw 16-bit scan code."));
-    instruction->setWordWrap(true);
-    layout->addWidget(instruction);
-
-    searchEdit_ = new QLineEdit;
-    searchEdit_->setPlaceholderText(QStringLiteral("Search keys and categories…"));
-    searchEdit_->setClearButtonEnabled(true);
-    layout->addWidget(searchEdit_);
-
-    list_ = new QListWidget;
-    list_->setAlternatingRowColors(true);
-    layout->addWidget(list_, 1);
-
-    auto* customLabel = new QLabel(QStringLiteral("Raw scan code"));
-    layout->addWidget(customLabel);
-    customCodeEdit_ = new QLineEdit(
-        QStringLiteral("0x%1").arg(currentCode, 4, 16, QLatin1Char('0')).toUpper());
-    customCodeEdit_->setValidator(
-        new QRegularExpressionValidator(
-            QRegularExpression(QStringLiteral("^(0[xX])?[0-9A-Fa-f]{1,4}$")),
-            customCodeEdit_));
-    layout->addWidget(customCodeEdit_);
-
-    auto* buttons = new QDialogButtonBox(
-        QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
-    layout->addWidget(buttons);
-
-    populate();
-
-    connect(searchEdit_, &QLineEdit::textChanged, this, [this](const QString& query) {
-        filterItems(query);
-    });
-    connect(list_, &QListWidget::itemSelectionChanged, this, [this] {
-        const auto* item = list_->currentItem();
-        if (item == nullptr) {
-            return;
-        }
-        const auto code = item->data(Qt::UserRole).toUInt();
-        customCodeEdit_->setText(
-            QStringLiteral("0x%1").arg(code, 4, 16, QLatin1Char('0')).toUpper());
-    });
-    connect(list_, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem*) {
-        acceptSelection();
-    });
-    connect(buttons, &QDialogButtonBox::accepted, this, [this] {
-        acceptSelection();
-    });
-    connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
+namespace {
+std::string lower(std::string s) {
+    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) {return std::tolower(c);});
+    return s;
 }
-
-hhkbs::keymap::Keymap::ScanCode KeyAssignmentDialog::selectedScanCode() const noexcept
-{
-    return selectedCode_;
 }
-
-void KeyAssignmentDialog::populate()
-{
+void KeyAssignmentDialog::reset(hhkbs::keymap::Keymap::ScanCode code) {
+    search_.fill(0);
+    std::snprintf(raw_.data(), raw_.size(), "0x%04X", code);
+}
+std::optional<hhkbs::keymap::Keymap::ScanCode> KeyAssignmentDialog::draw() {
+    ImGui::TextUnformatted("Choose a key or device function.");
+    ImGui::SetNextItemWidth(-1);
+    ImGui::InputTextWithHint("##search", "Search keys, categories or hex codes", search_.data(), search_.size());
+    const auto needle = lower(search_.data());
+    bool accept = false;
+    ImGui::BeginChild("Assignments", ImVec2(0, 290), ImGuiChildFlags_Borders);
     for (const auto& entry : hhkbs::keymap::ScanCodeCatalog::entries()) {
-        auto* item = new QListWidgetItem(
-            QStringLiteral("%1  ·  %2")
-                .arg(
-                    QString::fromStdString(entry.category),
-                    QString::fromStdString(entry.label)),
-            list_);
-        item->setData(Qt::UserRole, entry.code);
-        item->setToolTip(
-            QStringLiteral("0x%1").arg(entry.code, 4, 16, QLatin1Char('0')).toUpper());
-        if (entry.code == selectedCode_) {
-            list_->setCurrentItem(item);
-            list_->scrollToItem(item);
+        char hex[12];
+        std::snprintf(hex, sizeof(hex), "0x%04X", entry.code);
+        const auto label = entry.category + " / " + entry.label + "  " + hex;
+        if (!needle.empty() && lower(label).find(needle) == std::string::npos) continue;
+        ImGui::PushID(entry.code);
+        if (ImGui::Selectable(label.c_str(), lower(raw_.data()) == lower(hex), ImGuiSelectableFlags_AllowDoubleClick)) {
+            std::snprintf(raw_.data(), raw_.size(), "%s", hex);
+            accept = ImGui::IsMouseDoubleClicked(0);
         }
+        ImGui::PopID();
     }
-}
-
-void KeyAssignmentDialog::filterItems(const QString& query)
-{
-    const auto needle = query.trimmed();
-    for (int row = 0; row < list_->count(); ++row) {
-        auto* item = list_->item(row);
-        item->setHidden(
-            !needle.isEmpty()
-            && !item->text().contains(needle, Qt::CaseInsensitive)
-            && !item->toolTip().contains(needle, Qt::CaseInsensitive));
-    }
-}
-
-void KeyAssignmentDialog::acceptSelection()
-{
-    auto value = customCodeEdit_->text().trimmed();
-    if (value.startsWith(QStringLiteral("0x"), Qt::CaseInsensitive)) {
-        value.remove(0, 2);
-    }
-
-    bool ok = false;
-    const auto code = value.toUShort(&ok, 16);
-    if (!ok) {
-        QMessageBox::warning(
-            this,
-            QStringLiteral("Invalid scan code"),
-            QStringLiteral("Enter a hexadecimal value between 0x0000 and 0xFFFF."));
-        return;
-    }
-
-    selectedCode_ = code;
-    accept();
+    ImGui::EndChild();
+    ImGui::InputText("Raw hex code", raw_.data(), raw_.size());
+    std::string_view value(raw_.data());
+    if (value.starts_with("0x") || value.starts_with("0X")) value.remove_prefix(2);
+    unsigned code = 0;
+    const auto result = std::from_chars(value.data(), value.data()+value.size(), code, 16);
+    const bool valid = !value.empty() && value.size() <= 4 && result.ec == std::errc{} &&
+                       result.ptr == value.data()+value.size() && code <= 0xFFFF;
+    if (!valid) ImGui::TextUnformatted("Enter a hexadecimal value from 0000 to FFFF.");
+    ImGui::BeginDisabled(!valid);
+    accept |= ImGui::Button("Assign", ImVec2(110, 0));
+    ImGui::EndDisabled();
+    if (accept && valid) return static_cast<hhkbs::keymap::Keymap::ScanCode>(code);
+    return std::nullopt;
 }

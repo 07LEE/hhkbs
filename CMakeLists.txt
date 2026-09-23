@@ -11,11 +11,29 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
-set(CMAKE_AUTORCC ON)
+find_package(OpenGL REQUIRED)
+set(GLFW_LIBRARY_TYPE STATIC CACHE STRING "" FORCE)
+set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_WAYLAND OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_X11 ON CACHE BOOL "" FORCE)
+add_subdirectory(third_party/glfw EXCLUDE_FROM_ALL)
+find_package(Threads REQUIRED)
 
-find_package(Qt6 6.5 REQUIRED COMPONENTS Widgets)
-
-qt_standard_project_setup()
+# Vendored, pinned Dear ImGui; only the GLFW/OpenGL backends are compiled.
+add_library(hhkbs_imgui STATIC
+    third_party/imgui/imgui.cpp
+    third_party/imgui/imgui_draw.cpp
+    third_party/imgui/imgui_tables.cpp
+    third_party/imgui/imgui_widgets.cpp
+    third_party/imgui/backends/imgui_impl_glfw.cpp
+    third_party/imgui/backends/imgui_impl_opengl3.cpp
+)
+target_include_directories(hhkbs_imgui SYSTEM PUBLIC
+    third_party/imgui third_party/imgui/backends)
+target_link_libraries(hhkbs_imgui PUBLIC glfw OpenGL::GL)
 
 add_library(hhkbs_core STATIC
     src/device/DeviceDiscovery.cpp
@@ -33,6 +51,7 @@ add_library(hhkbs_core STATIC
     src/keymap/Keymap.h
     src/keymap/KeyboardLayout.cpp
     src/keymap/KeyboardLayout.h
+    src/keymap/ProfileFiles.cpp
     src/keymap/ProfileSerializer.cpp
     src/keymap/ProfileSerializer.h
     src/keymap/ScanCodeCatalog.cpp
@@ -54,7 +73,6 @@ add_executable(hhkbs
     src/gui/KeyboardWidget.h
     src/gui/MainWindow.cpp
     src/gui/MainWindow.h
-    resources/resources.qrc
 )
 
 set_target_properties(hhkbs PROPERTIES
@@ -64,7 +82,8 @@ set_target_properties(hhkbs PROPERTIES
 target_link_libraries(hhkbs
     PRIVATE
         hhkbs_core
-        Qt6::Widgets
+        hhkbs_imgui
+        Threads::Threads
 )
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
@@ -76,6 +95,14 @@ include(GNUInstallDirs)
 install(
     TARGETS hhkbs
     RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
+)
+
+# Keep upstream notices in place; install the consolidated distribution copies.
+install(FILES
+    LICENSE
+    third_party/licenses/DearImGui.txt
+    third_party/licenses/GLFW.txt
+    DESTINATION "${CMAKE_INSTALL_DATADIR}/licenses/hhkbs"
 )
 
 include(CTest)
@@ -96,6 +123,15 @@ if(BUILD_TESTING)
         target_compile_options(hhkbs_keymap_tests PRIVATE -Wall -Wextra -Wpedantic)
         target_compile_options(hhkbs_device_tests PRIVATE -Wall -Wextra -Wpedantic)
     endif()
+
+    add_executable(hhkbs_profile_files_tests tests/ProfileFilesTests.cpp)
+    target_link_libraries(hhkbs_profile_files_tests PRIVATE hhkbs_core)
+    find_program(XVFB_RUN xvfb-run)
+    if(XVFB_RUN)
+        add_test(NAME gui_startup COMMAND "${XVFB_RUN}" -a $<TARGET_FILE:hhkbs> --smoke-test)
+        set_tests_properties(gui_startup PROPERTIES TIMEOUT 20)
+    endif()
+    add_test(NAME profile_files COMMAND hhkbs_profile_files_tests)
 
     add_test(NAME keymap_model COMMAND hhkbs_keymap_tests)
     add_test(NAME hhkb_device_protocol COMMAND hhkbs_device_tests)
