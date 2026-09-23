@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.25)
 project(
     HHKBS
     VERSION 0.1.0
-    DESCRIPTION "Linux keymap editor for HHKB Studio"
+    DESCRIPTION "Unofficial HHKB Studio keymap editor for Linux"
     LANGUAGES CXX
 )
 
@@ -58,7 +58,7 @@ add_executable(hhkbs
 )
 
 set_target_properties(hhkbs PROPERTIES
-    OUTPUT_NAME "HHKBS"
+    OUTPUT_NAME "hhkbs"
 )
 
 target_link_libraries(hhkbs

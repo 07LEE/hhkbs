@@ -1,58 +1,43 @@
-# HHKBS
+# HHKBS — HHKB Studio Keymap Editor for Linux
 
-HHKBS is a visual HHKB Studio keymap editor for Linux. It discovers the keyboard automatically, reads the active profile, and lets you edit all four key layers without relying on a fixed `/dev/hidraw` path.
+HHKBS is an unofficial visual keymap editor for the US-layout HHKB Studio on Linux. It reads the active profile and lets you edit keys, layers, mouse buttons, and gesture pads.
 
-The current release targets the US-layout HHKB Studio on Ubuntu 26.04. HHKBS is written in C++20 with Qt 6 Widgets. A single-file AppImage is planned for a later release.
+HHKBS is an independent project and is not affiliated with or endorsed by PFU Limited.
 
-## Status
+![HHKBS editing an HHKB Studio US profile](docs/images/hhkbs-main.png)
 
-The editor currently supports:
+## Features
 
-- automatic USB device and configuration-interface discovery
-- read-only loading of device information and the active 960-byte profile
-- a scalable 60-key US layout and three pointing-stick mouse buttons
-- Base, Fn1, Fn2, and Fn3 layer editing
-- keyboard, keypad, media, mouse, and HHKB Studio device functions
-- searchable assignments and direct 16-bit scan-code entry
+- automatic HHKB Studio discovery and profile reading
+- visual editing of Base, Fn1, Fn2, and Fn3
+- mouse-button and gesture-pad editing
+- searchable key and device-function assignments
 - TOML profile import and export
-- per-key change highlighting and discarding unsaved edits
-- restoring the HHKB Studio US Profile 1 factory defaults in the editor
-- four gesture pads with editable assignments for all eight slide directions
-- an offline demo mode for development without a connected keyboard
+- US Profile 1 default restoration
 
-Writing profiles to the keyboard is intentionally disabled until the backup, validation, and recovery flow is implemented. Editing, importing, restoring defaults, and exporting only change the in-memory profile.
+## Current status
 
-## Requirements
+Writing profiles to the keyboard is not available yet. Editing, importing, restoring defaults, and exporting only change the profile in memory.
 
-- Linux with `hidraw` support
-- a C++20 compiler
-- CMake 3.25 or newer
-- Qt 6 Widgets development files
+## Build and run
 
-On Ubuntu, install the build dependencies with:
+Install the build dependencies on Ubuntu:
 
 ```bash
 sudo apt install build-essential cmake qt6-base-dev
 ```
 
-## Build
-
-Create a release build from the repository root:
+Build and start HHKBS:
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel
-```
-
-Run the tests:
-
-```bash
-ctest --test-dir build --output-on-failure
+./build/hhkbs
 ```
 
 ## Device permissions
 
-HHKBS needs read and write permission for the HHKB Studio `hidraw` interface. Install the included udev rule once:
+If HHKBS reports a permission error, install the included udev rule and reconnect the keyboard:
 
 ```bash
 sudo install -m 0644 packaging/60-hhkbs.rules /etc/udev/rules.d/60-hhkbs.rules
@@ -60,34 +45,13 @@ sudo udevadm control --reload-rules
 sudo udevadm trigger
 ```
 
-Reconnect the keyboard after installing the rule. Run HHKBS as your normal user; do not run the application with `sudo`.
+Run HHKBS as your normal user, not with `sudo`.
 
-## Run
+## Usage
 
-Connect the keyboard over USB and start HHKBS:
+1. Connect the HHKB Studio over USB and start HHKBS.
+2. Select Base, Fn1, Fn2, or Fn3.
+3. Select a key, mouse button, or gesture-pad direction and assign a function.
+4. Export the edited profile as TOML.
 
-```bash
-./build/HHKBS
-```
-
-If no keyboard is available, start with the built-in US Profile 1 defaults:
-
-```bash
-./build/HHKBS --demo
-```
-
-## Editing a profile
-
-1. Select Base, Fn1, Fn2, or Fn3.
-2. Select a key or gesture-pad direction and choose an assignment.
-3. Use **Export** to save the complete profile as TOML.
-
-**Restore defaults** replaces the editor contents with the built-in US Profile 1 factory layout. **Discard changes** returns to the profile most recently read or imported. Neither action writes to the keyboard.
-
-## Profile files
-
-TOML exports contain four layers with 120 unsigned 16-bit scan codes per layer. HHKBS preserves every slot, including reserved entries that are not shown in the visual editor, so profiles can be exported and imported without losing data.
-
-## Scope
-
-HHKBS currently supports the HHKB Studio USB identifier `04fe:0016` and the US layout. Bluetooth editing, JIS layout support, profile selection, device writing, recovery backups, and AppImage packaging remain future work.
+**Restore defaults** loads the US Profile 1 defaults into the editor. **Discard changes** returns to the profile most recently read or imported. Neither action writes to the keyboard.

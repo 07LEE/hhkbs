@@ -91,7 +91,7 @@ void MainWindow::buildInterface()
     auto* titleLayout = new QVBoxLayout;
     auto* title = new QLabel(QStringLiteral("HHKBS"));
     title->setObjectName(QStringLiteral("title"));
-    auto* subtitle = new QLabel(QStringLiteral("HHKB Studio keymap editor"));
+    auto* subtitle = new QLabel(QStringLiteral("HHKB Studio Keymap Editor for Linux"));
     subtitle->setObjectName(QStringLiteral("subtitle"));
     titleLayout->addWidget(title);
     titleLayout->addWidget(subtitle);
@@ -320,7 +320,7 @@ void MainWindow::applyScanResult(ScanResult result)
                 QStringLiteral("Connect an HHKB Studio"),
                 QStringLiteral(
                     "No supported keyboard was found. Connect it, import a TOML profile, "
-                    "or run HHKBS with --demo."));
+                    "or run hhkbs with --demo."));
         }
         break;
     case ScanResult::Status::PermissionDenied:
