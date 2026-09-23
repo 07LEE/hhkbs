@@ -17,6 +17,17 @@ find_package(Qt6 6.5 REQUIRED COMPONENTS Widgets)
 qt_standard_project_setup()
 
 add_library(hhkbs_core STATIC
+    src/device/DeviceDiscovery.cpp
+    src/device/DeviceDiscovery.h
+    src/device/DeviceError.h
+    src/device/DeviceInfo.h
+    src/device/HhkbStudioDevice.cpp
+    src/device/HhkbStudioDevice.h
+    src/device/HhkbProtocol.cpp
+    src/device/HhkbProtocol.h
+    src/device/HidrawTransport.cpp
+    src/device/HidrawTransport.h
+    src/device/Transport.h
     src/keymap/Keymap.cpp
     src/keymap/Keymap.h
 )
@@ -64,9 +75,17 @@ if(BUILD_TESTING)
 
     target_link_libraries(hhkbs_keymap_tests PRIVATE hhkbs_core)
 
+    add_executable(hhkbs_device_tests
+        tests/HhkbStudioDeviceTests.cpp
+    )
+
+    target_link_libraries(hhkbs_device_tests PRIVATE hhkbs_core)
+
     if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
         target_compile_options(hhkbs_keymap_tests PRIVATE -Wall -Wextra -Wpedantic)
+        target_compile_options(hhkbs_device_tests PRIVATE -Wall -Wextra -Wpedantic)
     endif()
 
     add_test(NAME keymap_model COMMAND hhkbs_keymap_tests)
+    add_test(NAME hhkb_device_protocol COMMAND hhkbs_device_tests)
 endif()

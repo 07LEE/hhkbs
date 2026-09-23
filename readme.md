@@ -9,15 +9,18 @@ single AppImage.
 
 ## Current status
 
-Phase 1 provides the project foundation:
+Phase 2 provides the project foundation and read-only device communication:
 
 - a CMake-based Qt 6 desktop application
 - a Qt-independent keymap data model
 - profile decoding and encoding for four 240-byte layers
 - change tracking and reset support
 - core model tests through CTest
+- automatic discovery of HHKB Studio HID interfaces
+- device information and current-profile reading
+- non-blocking device I/O with connection and permission status in the GUI
 
-Device discovery and read-only communication are planned for phase 2.
+Visual key rendering and assignment editing are planned for phase 3.
 
 ## Build
 
@@ -43,3 +46,17 @@ Run the tests:
 ```bash
 ctest --test-dir build --output-on-failure
 ```
+
+## Device permissions
+
+HHKBS needs read/write access to the HHKB Studio hidraw interface. If the app
+reports a permission error, install the included udev rule once:
+
+```bash
+sudo install -m 0644 packaging/60-hhkbs.rules /etc/udev/rules.d/
+sudo udevadm control --reload-rules
+sudo udevadm trigger
+```
+
+Reconnect the keyboard after installing the rule. The application itself
+should always be run as a normal user.

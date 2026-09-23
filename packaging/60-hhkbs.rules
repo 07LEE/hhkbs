@@ -1,0 +1,5 @@
+# HHKB Studio connected over USB
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ATTRS{idVendor}=="04fe", ATTRS{idProduct}=="0016", MODE="0660", TAG+="uaccess"
+
+# HHKB Studio connected over Bluetooth
+KERNEL=="hidraw*", SUBSYSTEM=="hidraw", ENV{HID_ID}=="0005:000004FE:00000016", MODE="0660", TAG+="uaccess"

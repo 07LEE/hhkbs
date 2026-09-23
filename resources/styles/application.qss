@@ -24,6 +24,16 @@ QLabel#connectionStatus {
     padding: 0 14px;
 }
 
+QLabel#connectionStatus[state="connected"] {
+    background: #dff4e7;
+    color: #176438;
+}
+
+QLabel#connectionStatus[state="error"] {
+    background: #fbe5e5;
+    color: #9b3030;
+}
+
 QTabBar::tab {
     background: transparent;
     border: 0;
