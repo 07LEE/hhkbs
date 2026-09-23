@@ -18,12 +18,12 @@ KeyAssignmentDialog::KeyAssignmentDialog(
     : QDialog(parent)
     , selectedCode_(currentCode)
 {
-    setWindowTitle(QStringLiteral("Assign key"));
+    setWindowTitle(QStringLiteral("Assign input"));
     setMinimumSize(460, 540);
 
     auto* layout = new QVBoxLayout(this);
     auto* instruction = new QLabel(
-        QStringLiteral("Choose a known key or enter a raw 16-bit scan code."));
+        QStringLiteral("Choose a key or device function, or enter a raw 16-bit scan code."));
     instruction->setWordWrap(true);
     layout->addWidget(instruction);
 

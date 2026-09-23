@@ -20,6 +20,7 @@ struct KeyPosition {
 class KeyboardLayout final {
 public:
     [[nodiscard]] static const std::vector<KeyPosition>& usStudio();
+    [[nodiscard]] static const std::vector<KeyPosition>& gesturePads();
     [[nodiscard]] static std::vector<std::uint8_t> demoProfile();
     [[nodiscard]] static std::vector<std::uint8_t> usWindowsFactoryProfile();
 };

@@ -14,8 +14,8 @@
 
 namespace {
 
-constexpr qreal layoutWidth = 15.0;
-constexpr qreal layoutHeight = 6.1;
+constexpr qreal layoutWidth = 17.8;
+constexpr qreal layoutHeight = 7.25;
 constexpr qreal outerMargin = 18.0;
 
 }  // namespace
@@ -25,7 +25,7 @@ KeyboardWidget::KeyboardWidget(QWidget* parent)
 {
     setMouseTracking(true);
     setCursor(Qt::PointingHandCursor);
-    setMinimumHeight(340);
+    setMinimumHeight(400);
     setAccessibleName(QStringLiteral("HHKB Studio keymap"));
 }
 
@@ -47,7 +47,7 @@ void KeyboardWidget::setLayer(const std::size_t layer)
 
 QSize KeyboardWidget::sizeHint() const
 {
-    return {1080, 440};
+    return {1080, 520};
 }
 
 void KeyboardWidget::paintEvent(QPaintEvent* event)
@@ -61,13 +61,19 @@ void KeyboardWidget::paintEvent(QPaintEvent* event)
         return;
     }
 
-    for (const auto& key : hhkbs::keymap::KeyboardLayout::usStudio()) {
-        const auto rectangle = keyRect(key);
-        const auto modified = keymap_->isKeyModified(layer_, key.slot);
-        const auto hovered = hoveredSlot_ && *hoveredSlot_ == key.slot;
+    const auto paintPosition = [this, &painter](
+                                   const hhkbs::keymap::KeyPosition& position,
+                                   const bool gesturePad) {
+        const auto rectangle = keyRect(position);
+        const auto modified = keymap_->isKeyModified(layer_, position.slot);
+        const auto hovered = hoveredSlot_ && *hoveredSlot_ == position.slot;
 
-        QColor background = QColor(QStringLiteral("#f8f9fb"));
-        QColor border = QColor(QStringLiteral("#cbd1da"));
+        QColor background = gesturePad
+            ? QColor(QStringLiteral("#f7f4ff"))
+            : QColor(QStringLiteral("#f8f9fb"));
+        QColor border = gesturePad
+            ? QColor(QStringLiteral("#c9c0e8"))
+            : QColor(QStringLiteral("#cbd1da"));
         if (modified) {
             background = QColor(QStringLiteral("#e5efff"));
             border = QColor(QStringLiteral("#2b6de5"));
@@ -86,7 +92,10 @@ void KeyboardWidget::paintEvent(QPaintEvent* event)
         painter.setFont(legendFont);
         painter.setPen(QColor(QStringLiteral("#7a8492")));
         const QRectF legendRect = rectangle.adjusted(8, 5, -6, -4);
-        painter.drawText(legendRect, Qt::AlignLeft | Qt::AlignTop, QString::fromStdString(key.legend));
+        painter.drawText(
+            legendRect,
+            Qt::AlignLeft | Qt::AlignTop,
+            QString::fromStdString(position.legend));
 
         QFont assignmentFont = font();
         auto assignmentSize = std::max(9, static_cast<int>(unit * 0.18));
@@ -94,7 +103,7 @@ void KeyboardWidget::paintEvent(QPaintEvent* event)
         assignmentFont.setWeight(QFont::DemiBold);
         const auto assignmentLabel = QString::fromStdString(
             hhkbs::keymap::ScanCodeCatalog::labelFor(
-                keymap_->scanCode(layer_, key.slot)));
+                keymap_->scanCode(layer_, position.slot)));
         while (assignmentSize > 8
                && QFontMetrics(assignmentFont).horizontalAdvance(assignmentLabel)
                    > rectangle.width() - 10) {
@@ -115,6 +124,13 @@ void KeyboardWidget::paintEvent(QPaintEvent* event)
                 3,
                 3);
         }
+    };
+
+    for (const auto& key : hhkbs::keymap::KeyboardLayout::usStudio()) {
+        paintPosition(key, false);
+    }
+    for (const auto& direction : hhkbs::keymap::KeyboardLayout::gesturePads()) {
+        paintPosition(direction, true);
     }
 }
 
@@ -170,6 +186,11 @@ std::optional<std::size_t> KeyboardWidget::slotAt(const QPointF& point) const
     for (const auto& key : hhkbs::keymap::KeyboardLayout::usStudio()) {
         if (keyRect(key).contains(point)) {
             return key.slot;
+        }
+    }
+    for (const auto& direction : hhkbs::keymap::KeyboardLayout::gesturePads()) {
+        if (keyRect(direction).contains(point)) {
+            return direction.slot;
         }
     }
     return std::nullopt;

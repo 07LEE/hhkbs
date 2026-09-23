@@ -109,6 +109,28 @@ void studioLayoutHasUniqueEditableSlots()
         "layout contains duplicate profile slots");
 }
 
+void gesturePadLayoutHasAllDirections()
+{
+    const auto& pads = hhkbs::keymap::KeyboardLayout::gesturePads();
+    require(pads.size() == 8, "four gesture pads must expose eight directions");
+
+    std::vector<std::size_t> slots;
+    for (const auto& direction : pads) {
+        require(direction.slot < Keymap::keysPerLayer, "gesture slot is outside the profile");
+        slots.push_back(direction.slot);
+    }
+    std::ranges::sort(slots);
+    require(
+        std::ranges::adjacent_find(slots) == slots.end(),
+        "gesture pad layout contains duplicate slots");
+
+    for (const auto& key : hhkbs::keymap::KeyboardLayout::usStudio()) {
+        require(
+            std::ranges::find(slots, key.slot) == slots.end(),
+            "gesture pad slot overlaps a keyboard slot");
+    }
+}
+
 void factoryProfileContainsAllDefaultLayers()
 {
     const Keymap profile(hhkbs::keymap::KeyboardLayout::usWindowsFactoryProfile());
@@ -145,6 +167,12 @@ void tomlProfilesRoundTrip()
     require(
         hhkbs::keymap::ScanCodeCatalog::labelFor(0x5FA7) == "Pointer Speed 4",
         "HHKB Studio device function label is incorrect");
+    require(
+        hhkbs::keymap::ScanCodeCatalog::labelFor(0x00F9) == "Wheel Up",
+        "gesture pad wheel label is incorrect");
+    require(
+        hhkbs::keymap::ScanCodeCatalog::labelFor(0x5F8D) == "Next Window",
+        "gesture pad window-switch label is incorrect");
 }
 
 void malformedTomlIsRejected()
@@ -168,6 +196,7 @@ int main()
         invalidInputIsRejected();
         individualChangesAreTracked();
         studioLayoutHasUniqueEditableSlots();
+        gesturePadLayoutHasAllDirections();
         factoryProfileContainsAllDefaultLayers();
         tomlProfilesRoundTrip();
         malformedTomlIsRejected();

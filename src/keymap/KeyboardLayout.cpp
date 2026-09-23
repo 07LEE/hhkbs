@@ -9,6 +9,8 @@
 namespace hhkbs::keymap {
 namespace {
 
+constexpr float keyboardOffsetX = 1.4F;
+
 struct KeyDefinition {
     std::size_t slot;
     std::string_view legend;
@@ -34,7 +36,7 @@ void appendRow(
     const float y,
     const float startX = 0.0F)
 {
-    float x = startX;
+    float x = startX + keyboardOffsetX;
     for (const auto& definition : definitions) {
         positions.push_back(KeyPosition{
             .slot = definition.slot,
@@ -143,11 +145,31 @@ std::vector<KeyPosition> makeUsStudioLayout()
     return positions;
 }
 
+std::vector<KeyPosition> makeGesturePadLayout()
+{
+    return {
+        {86, "Left side ↑", 0.0F, 1.35F, 1.15F, 0x0052},
+        {87, "Left side ↓", 0.0F, 2.35F, 1.15F, 0x0051},
+        {101, "Front left ←", 4.20F, 6.25F, 1.55F, 0x0050},
+        {102, "Front left →", 5.75F, 6.25F, 1.55F, 0x004F},
+        {108, "Front right ←", 10.50F, 6.25F, 1.55F, 0x5F8C},
+        {109, "Front right →", 12.05F, 6.25F, 1.55F, 0x5F8D},
+        {116, "Right side ↑", 16.65F, 1.35F, 1.15F, 0x00F9},
+        {117, "Right side ↓", 16.65F, 2.35F, 1.15F, 0x00FA},
+    };
+}
+
 }  // namespace
 
 const std::vector<KeyPosition>& KeyboardLayout::usStudio()
 {
     static const auto positions = makeUsStudioLayout();
+    return positions;
+}
+
+const std::vector<KeyPosition>& KeyboardLayout::gesturePads()
+{
+    static const auto positions = makeGesturePadLayout();
     return positions;
 }
 
