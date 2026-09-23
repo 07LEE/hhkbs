@@ -9,7 +9,7 @@ single AppImage.
 
 ## Current status
 
-Phase 2 provides the project foundation and read-only device communication:
+Phase 3 provides a visual, offline-capable keymap editor:
 
 - a CMake-based Qt 6 desktop application
 - a Qt-independent keymap data model
@@ -19,8 +19,12 @@ Phase 2 provides the project foundation and read-only device communication:
 - automatic discovery of HHKB Studio HID interfaces
 - device information and current-profile reading
 - non-blocking device I/O with connection and permission status in the GUI
+- a scalable 60-key US layout with three pointing-stick mouse buttons
+- Base, Fn1, Fn2, and Fn3 layer editing
+- searchable key assignment with raw 16-bit scan-code support
+- TOML profile import, export, change tracking, and reset
 
-Visual key rendering and assignment editing are planned for phase 3.
+Safe profile backup and writing to the keyboard are planned for phase 4.
 
 ## Build
 
@@ -39,6 +43,12 @@ Run the application:
 
 ```bash
 ./build/HHKBS
+```
+
+Run with an offline sample profile:
+
+```bash
+./build/HHKBS --demo
 ```
 
 Run the tests:

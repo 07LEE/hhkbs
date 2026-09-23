@@ -15,6 +15,10 @@ QLabel#placeholderBody {
     color: #69717d;
 }
 
+QLabel#profileSummary {
+    color: #69717d;
+}
+
 QLabel#connectionStatus {
     background: #e8eaed;
     border-radius: 14px;
@@ -86,4 +90,33 @@ QPushButton:disabled {
     background: #eceef1;
     border-color: #dfe2e7;
     color: #9da4ae;
+}
+
+QPushButton#primaryButton:disabled {
+    background: #eceef1;
+    border-color: #dfe2e7;
+    color: #9da4ae;
+}
+
+QLineEdit,
+QListWidget {
+    background: #ffffff;
+    border: 1px solid #cfd4db;
+    border-radius: 7px;
+    padding: 7px;
+}
+
+QLineEdit:focus,
+QListWidget:focus {
+    border-color: #2b6de5;
+}
+
+QListWidget::item {
+    border-radius: 4px;
+    padding: 7px;
+}
+
+QListWidget::item:selected {
+    background: #dce9ff;
+    color: #173f7a;
 }

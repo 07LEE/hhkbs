@@ -3,6 +3,7 @@
 #include <QApplication>
 #include <QFile>
 #include <QTextStream>
+#include <QTimer>
 
 namespace {
 
@@ -28,8 +29,21 @@ int main(int argc, char* argv[])
 
     applyStyleSheet(application);
 
-    MainWindow window;
+    const auto demoMode = application.arguments().contains(QStringLiteral("--demo"));
+    MainWindow window(demoMode);
     window.show();
+
+    const auto screenshotPath = qEnvironmentVariable("HHKBS_SCREENSHOT");
+    if (!screenshotPath.isEmpty()) {
+        bool delayIsValid = false;
+        const auto configuredDelay =
+            qEnvironmentVariableIntValue("HHKBS_SCREENSHOT_DELAY_MS", &delayIsValid);
+        const auto screenshotDelay = delayIsValid ? configuredDelay : 250;
+        QTimer::singleShot(screenshotDelay, &application, [&application, &window, screenshotPath] {
+            window.grab().save(screenshotPath);
+            application.quit();
+        });
+    }
 
     return application.exec();
 }

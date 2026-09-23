@@ -31,6 +31,9 @@ public:
 
     [[nodiscard]] const Layers& layers() const noexcept;
     [[nodiscard]] bool isModified() const noexcept;
+    [[nodiscard]] bool isKeyModified(
+        std::size_t layerIndex,
+        std::size_t keyIndex) const;
     void reset() noexcept;
 
 private:

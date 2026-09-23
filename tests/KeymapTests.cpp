@@ -1,5 +1,9 @@
+#include "keymap/KeyboardLayout.h"
 #include "keymap/Keymap.h"
+#include "keymap/ProfileSerializer.h"
+#include "keymap/ScanCodeCatalog.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <exception>
 #include <iostream>
@@ -79,6 +83,66 @@ void invalidInputIsRejected()
         "an invalid key index was accepted");
 }
 
+void individualChangesAreTracked()
+{
+    const std::vector<std::uint8_t> profile(Keymap::profileByteCount, 0);
+    Keymap keymap(profile);
+    keymap.setScanCode(2, 17, 0x004F);
+
+    require(keymap.isKeyModified(2, 17), "changed key was not tracked");
+    require(!keymap.isKeyModified(2, 18), "unchanged key was marked as changed");
+}
+
+void studioLayoutHasUniqueEditableSlots()
+{
+    const auto& layout = hhkbs::keymap::KeyboardLayout::usStudio();
+    require(layout.size() == 63, "US Studio layout must expose 60 keys and 3 mouse buttons");
+
+    std::vector<std::size_t> slots;
+    for (const auto& position : layout) {
+        require(position.slot < Keymap::keysPerLayer, "layout slot is outside the profile");
+        slots.push_back(position.slot);
+    }
+    std::ranges::sort(slots);
+    require(
+        std::ranges::adjacent_find(slots) == slots.end(),
+        "layout contains duplicate profile slots");
+}
+
+void tomlProfilesRoundTrip()
+{
+    Keymap original(hhkbs::keymap::KeyboardLayout::demoProfile());
+    original.setScanCode(3, 119, 0xABCD);
+
+    const auto document = hhkbs::keymap::ProfileSerializer::toToml(original);
+    const auto parsed = hhkbs::keymap::ProfileSerializer::fromToml(document);
+
+    require(parsed.toBytes() == original.toBytes(), "TOML profile did not round trip");
+    require(
+        hhkbs::keymap::ScanCodeCatalog::labelFor(0x004F) == "Right Arrow",
+        "known scan code label is incorrect");
+    require(
+        hhkbs::keymap::ScanCodeCatalog::labelFor(0xABCD) == "0xABCD",
+        "unknown scan code label is incorrect");
+    require(
+        hhkbs::keymap::ScanCodeCatalog::labelFor(0x00F4) == "Mouse Left Click",
+        "HHKB Studio mouse code label is incorrect");
+    require(
+        hhkbs::keymap::ScanCodeCatalog::labelFor(0x5FA7) == "Pointer Speed 4",
+        "HHKB Studio device function label is incorrect");
+}
+
+void malformedTomlIsRejected()
+{
+    requireThrows<std::invalid_argument>(
+        [] {
+            static_cast<void>(
+                hhkbs::keymap::ProfileSerializer::fromToml(
+                    "[[layers]]\nscancodes = [0x0004]\n"));
+        },
+        "incomplete TOML profile was accepted");
+}
+
 }  // namespace
 
 int main()
@@ -87,6 +151,10 @@ int main()
         profileRoundTripsWithoutDataLoss();
         modificationsCanBeReset();
         invalidInputIsRejected();
+        individualChangesAreTracked();
+        studioLayoutHasUniqueEditableSlots();
+        tomlProfilesRoundTrip();
+        malformedTomlIsRejected();
     } catch (const std::exception& error) {
         std::cerr << "Keymap test failed: " << error.what() << '\n';
         return 1;

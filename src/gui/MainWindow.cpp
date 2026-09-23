@@ -3,13 +3,23 @@
 #include "device/DeviceDiscovery.h"
 #include "device/HhkbStudioDevice.h"
 #include "device/HidrawTransport.h"
+#include "gui/KeyAssignmentDialog.h"
+#include "gui/KeyboardWidget.h"
+#include "keymap/KeyboardLayout.h"
+#include "keymap/ProfileSerializer.h"
 
+#include <QCloseEvent>
+#include <QFile>
+#include <QFileDialog>
+#include <QFileInfo>
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QMessageBox>
 #include <QMetaObject>
 #include <QPointer>
 #include <QPushButton>
+#include <QSaveFile>
 #include <QSizePolicy>
 #include <QStyle>
 #include <QTabBar>
@@ -50,23 +60,32 @@ QString text(const std::string& value)
 
 }  // namespace
 
-MainWindow::MainWindow(QWidget* parent)
+MainWindow::MainWindow(const bool demoMode, QWidget* parent)
     : QMainWindow(parent)
 {
     buildInterface();
-    beginDeviceScan();
+    if (demoMode) {
+        keymap_.load(hhkbs::keymap::KeyboardLayout::demoProfile());
+        profileLoaded_ = true;
+        connectionStatus_->setText(QStringLiteral("Demo profile"));
+        connectionStatus_->setProperty("state", QStringLiteral("idle"));
+        showEditor(QStringLiteral("Offline US-layout demo · changes are kept in memory"));
+        updateActions();
+    } else {
+        beginDeviceScan();
+    }
 }
 
 void MainWindow::buildInterface()
 {
     setWindowTitle(QStringLiteral("HHKBS"));
-    setMinimumSize(900, 560);
-    resize(1120, 700);
+    setMinimumSize(940, 620);
+    resize(1180, 760);
 
     auto* centralWidget = new QWidget(this);
     auto* pageLayout = new QVBoxLayout(centralWidget);
     pageLayout->setContentsMargins(32, 28, 32, 28);
-    pageLayout->setSpacing(22);
+    pageLayout->setSpacing(18);
 
     auto* headerLayout = new QHBoxLayout;
     auto* titleLayout = new QVBoxLayout;
@@ -85,6 +104,7 @@ void MainWindow::buildInterface()
     headerLayout->addWidget(connectionStatus_);
     pageLayout->addLayout(headerLayout);
 
+    auto* layerRow = new QHBoxLayout;
     layerTabs_ = new QTabBar;
     layerTabs_->setObjectName(QStringLiteral("layerTabs"));
     layerTabs_->addTab(QStringLiteral("Base"));
@@ -93,12 +113,19 @@ void MainWindow::buildInterface()
     layerTabs_->addTab(QStringLiteral("Fn3"));
     layerTabs_->setExpanding(false);
     layerTabs_->setEnabled(false);
-    pageLayout->addWidget(layerTabs_);
+    layerRow->addWidget(layerTabs_);
+    layerRow->addStretch();
+    profileSummary_ = new QLabel;
+    profileSummary_->setObjectName(QStringLiteral("profileSummary"));
+    profileSummary_->setVisible(false);
+    layerRow->addWidget(profileSummary_);
+    pageLayout->addLayout(layerRow);
 
     workspace_ = new QFrame;
     workspace_->setObjectName(QStringLiteral("workspace"));
     workspace_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     auto* workspaceLayout = new QVBoxLayout(workspace_);
+    workspaceLayout->setContentsMargins(16, 16, 16, 16);
     workspaceLayout->setAlignment(Qt::AlignCenter);
 
     workspaceTitle_ = new QLabel(QStringLiteral("Looking for an HHKB Studio"));
@@ -109,36 +136,54 @@ void MainWindow::buildInterface()
     workspaceBody_->setAlignment(Qt::AlignCenter);
     workspaceBody_->setWordWrap(true);
     workspaceBody_->setMaximumWidth(680);
+    keyboardWidget_ = new KeyboardWidget;
+    keyboardWidget_->setVisible(false);
+
     workspaceLayout->addWidget(workspaceTitle_);
     workspaceLayout->addWidget(workspaceBody_);
+    workspaceLayout->addWidget(keyboardWidget_, 1);
     pageLayout->addWidget(workspace_, 1);
 
     auto* actionLayout = new QHBoxLayout;
     refreshButton_ = new QPushButton(QStringLiteral("Read from keyboard"));
-    auto* importButton = new QPushButton(QStringLiteral("Import"));
-    auto* exportButton = new QPushButton(QStringLiteral("Export"));
-    auto* resetButton = new QPushButton(QStringLiteral("Discard changes"));
+    importButton_ = new QPushButton(QStringLiteral("Import"));
+    exportButton_ = new QPushButton(QStringLiteral("Export"));
+    resetButton_ = new QPushButton(QStringLiteral("Discard changes"));
     auto* applyButton = new QPushButton(QStringLiteral("Apply to keyboard"));
     applyButton->setObjectName(QStringLiteral("primaryButton"));
-
-    importButton->setEnabled(false);
-    exportButton->setEnabled(false);
-    resetButton->setEnabled(false);
     applyButton->setEnabled(false);
 
     connect(refreshButton_, &QPushButton::clicked, this, [this] {
-        beginDeviceScan();
+        if (confirmDiscardChanges()) {
+            beginDeviceScan();
+        }
+    });
+    connect(importButton_, &QPushButton::clicked, this, [this] {
+        importProfile();
+    });
+    connect(exportButton_, &QPushButton::clicked, this, [this] {
+        static_cast<void>(exportProfile());
+    });
+    connect(resetButton_, &QPushButton::clicked, this, [this] {
+        discardChanges();
+    });
+    connect(layerTabs_, &QTabBar::currentChanged, this, [this](const int layer) {
+        keyboardWidget_->setLayer(static_cast<std::size_t>(layer));
+    });
+    connect(keyboardWidget_, &KeyboardWidget::keyActivated, this, [this](const std::size_t slot) {
+        editKey(slot);
     });
 
     actionLayout->addWidget(refreshButton_);
-    actionLayout->addWidget(importButton);
-    actionLayout->addWidget(exportButton);
+    actionLayout->addWidget(importButton_);
+    actionLayout->addWidget(exportButton_);
     actionLayout->addStretch();
-    actionLayout->addWidget(resetButton);
+    actionLayout->addWidget(resetButton_);
     actionLayout->addWidget(applyButton);
     pageLayout->addLayout(actionLayout);
 
     setCentralWidget(centralWidget);
+    updateActions();
 }
 
 void MainWindow::beginDeviceScan()
@@ -152,9 +197,11 @@ void MainWindow::beginDeviceScan()
     connectionStatus_->setProperty("state", QStringLiteral("searching"));
     connectionStatus_->style()->unpolish(connectionStatus_);
     connectionStatus_->style()->polish(connectionStatus_);
-    workspaceTitle_->setText(QStringLiteral("Looking for an HHKB Studio"));
-    workspaceBody_->setText(QStringLiteral("Checking available HID interfaces…"));
-    layerTabs_->setEnabled(false);
+    if (!profileLoaded_) {
+        showPlaceholder(
+            QStringLiteral("Looking for an HHKB Studio"),
+            QStringLiteral("Checking available HID interfaces…"));
+    }
 
     const QPointer<MainWindow> window(this);
     QThreadPool::globalInstance()->start([window] {
@@ -235,77 +282,242 @@ void MainWindow::applyScanResult(ScanResult result)
     case ScanResult::Status::Connected: {
         try {
             keymap_.load(result.profileBytes);
+            profileLoaded_ = true;
         } catch (const std::exception& error) {
             connectionStatus_->setText(QStringLiteral("Profile error"));
             connectionStatus_->setProperty("state", QStringLiteral("error"));
-            workspaceTitle_->setText(QStringLiteral("The profile could not be loaded"));
-            workspaceBody_->setText(QString::fromLocal8Bit(error.what()));
-            layerTabs_->setEnabled(false);
+            showPlaceholder(
+                QStringLiteral("The profile could not be loaded"),
+                QString::fromLocal8Bit(error.what()));
             break;
         }
 
         connectionStatus_->setText(QStringLiteral("Connected"));
         connectionStatus_->setProperty("state", QStringLiteral("connected"));
-        workspaceTitle_->setText(
-            result.productName.isEmpty()
-                ? QStringLiteral("HHKB Studio")
-                : result.productName);
-        workspaceBody_->setText(
-            QStringLiteral(
-                "Device: %1\nModel: %2 · Layout: %3 · Firmware: %4\n"
-                "Profile %5 loaded — 4 layers, 120 scan-code slots per layer")
+        showEditor(
+            QStringLiteral("%1 · %2 · Firmware %3 · Profile %4")
                 .arg(
-                    result.devicePath,
-                    result.modelName.isEmpty() ? QStringLiteral("Unknown") : result.modelName,
+                    result.modelName.isEmpty() ? QStringLiteral("HHKB Studio") : result.modelName,
                     result.keyboardLayout.isEmpty()
-                        ? QStringLiteral("Unknown")
+                        ? QStringLiteral("US")
                         : result.keyboardLayout,
                     result.firmwareVersion.isEmpty()
                         ? QStringLiteral("Unknown")
                         : result.firmwareVersion)
                 .arg(result.currentProfile + 1));
-        layerTabs_->setEnabled(true);
         break;
     }
     case ScanResult::Status::NotFound:
         connectionStatus_->setText(QStringLiteral("No device"));
         connectionStatus_->setProperty("state", QStringLiteral("idle"));
-        workspaceTitle_->setText(QStringLiteral("Connect an HHKB Studio"));
-        workspaceBody_->setText(
-            QStringLiteral(
-                "No supported HHKB Studio was found. Connect it over USB or Bluetooth, "
-                "then select “Read from keyboard”."));
-        layerTabs_->setEnabled(false);
+        if (!profileLoaded_) {
+            showPlaceholder(
+                QStringLiteral("Connect an HHKB Studio"),
+                QStringLiteral(
+                    "No supported keyboard was found. Connect it, import a TOML profile, "
+                    "or run HHKBS with --demo."));
+        }
         break;
     case ScanResult::Status::PermissionDenied:
         connectionStatus_->setText(QStringLiteral("Permission required"));
         connectionStatus_->setProperty("state", QStringLiteral("error"));
-        workspaceTitle_->setText(QStringLiteral("Device access is blocked"));
-        workspaceBody_->setText(
-            QStringLiteral(
-                "HHKB Studio was found at %1, but read/write access is unavailable.\n"
-                "Install a udev rule for USB vendor 04fe and product 0016, "
-                "then reconnect the keyboard.")
-                .arg(result.devicePath));
-        layerTabs_->setEnabled(false);
+        if (!profileLoaded_) {
+            showPlaceholder(
+                QStringLiteral("Device access is blocked"),
+                QStringLiteral(
+                    "HHKB Studio was found at %1, but read/write access is unavailable.\n"
+                    "Install the packaged udev rule and reconnect the keyboard.")
+                    .arg(result.devicePath));
+        }
         break;
     case ScanResult::Status::Failed:
         connectionStatus_->setText(QStringLiteral("Connection failed"));
         connectionStatus_->setProperty("state", QStringLiteral("error"));
-        workspaceTitle_->setText(QStringLiteral("Could not read the keyboard"));
-        workspaceBody_->setText(result.errorMessage);
-        layerTabs_->setEnabled(false);
+        if (!profileLoaded_) {
+            showPlaceholder(
+                QStringLiteral("Could not read the keyboard"),
+                result.errorMessage);
+        }
         break;
     }
 
     connectionStatus_->style()->unpolish(connectionStatus_);
     connectionStatus_->style()->polish(connectionStatus_);
+    updateActions();
 }
 
 void MainWindow::setBusy(const bool busy)
 {
     busy_ = busy;
-    if (refreshButton_ != nullptr) {
-        refreshButton_->setEnabled(!busy);
+    updateActions();
+}
+
+void MainWindow::showEditor(const QString& summary)
+{
+    workspaceTitle_->setVisible(false);
+    workspaceBody_->setVisible(false);
+    keyboardWidget_->setKeymap(&keymap_);
+    keyboardWidget_->setLayer(static_cast<std::size_t>(layerTabs_->currentIndex()));
+    keyboardWidget_->setVisible(true);
+    profileSummary_->setText(summary);
+    profileSummary_->setVisible(true);
+    layerTabs_->setEnabled(true);
+}
+
+void MainWindow::showPlaceholder(const QString& title, const QString& body)
+{
+    keyboardWidget_->setVisible(false);
+    keyboardWidget_->setKeymap(nullptr);
+    profileSummary_->setVisible(false);
+    workspaceTitle_->setText(title);
+    workspaceTitle_->setVisible(true);
+    workspaceBody_->setText(body);
+    workspaceBody_->setVisible(true);
+    layerTabs_->setEnabled(false);
+}
+
+void MainWindow::editKey(const std::size_t slot)
+{
+    if (!profileLoaded_) {
+        return;
+    }
+
+    const auto layer = static_cast<std::size_t>(layerTabs_->currentIndex());
+    KeyAssignmentDialog dialog(keymap_.scanCode(layer, slot), this);
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+
+    keymap_.setScanCode(layer, slot, dialog.selectedScanCode());
+    keyboardWidget_->update();
+    updateActions();
+}
+
+void MainWindow::importProfile()
+{
+    if (!confirmDiscardChanges()) {
+        return;
+    }
+
+    const auto path = QFileDialog::getOpenFileName(
+        this,
+        QStringLiteral("Import HHKB profile"),
+        {},
+        QStringLiteral("TOML profiles (*.toml);;All files (*)"));
+    if (path.isEmpty()) {
+        return;
+    }
+
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        QMessageBox::critical(
+            this,
+            QStringLiteral("Could not open profile"),
+            file.errorString());
+        return;
+    }
+
+    try {
+        const auto data = file.readAll();
+        keymap_ = hhkbs::keymap::ProfileSerializer::fromToml(
+            std::string_view(data.constData(), static_cast<std::size_t>(data.size())));
+        profileLoaded_ = true;
+        connectionStatus_->setText(QStringLiteral("Offline profile"));
+        connectionStatus_->setProperty("state", QStringLiteral("idle"));
+        showEditor(QFileInfo(path).fileName());
+        updateActions();
+    } catch (const std::exception& error) {
+        QMessageBox::critical(
+            this,
+            QStringLiteral("Invalid profile"),
+            QString::fromLocal8Bit(error.what()));
+    }
+}
+
+bool MainWindow::exportProfile()
+{
+    if (!profileLoaded_) {
+        return false;
+    }
+
+    const auto path = QFileDialog::getSaveFileName(
+        this,
+        QStringLiteral("Export HHKB profile"),
+        QStringLiteral("profile.toml"),
+        QStringLiteral("TOML profiles (*.toml)"));
+    if (path.isEmpty()) {
+        return false;
+    }
+
+    QSaveFile file(path);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        QMessageBox::critical(
+            this,
+            QStringLiteral("Could not export profile"),
+            file.errorString());
+        return false;
+    }
+
+    const auto document = hhkbs::keymap::ProfileSerializer::toToml(keymap_);
+    if (file.write(document.data(), static_cast<qint64>(document.size()))
+            != static_cast<qint64>(document.size())
+        || !file.commit()) {
+        QMessageBox::critical(
+            this,
+            QStringLiteral("Could not export profile"),
+            file.errorString());
+        return false;
+    }
+    return true;
+}
+
+void MainWindow::discardChanges()
+{
+    if (!profileLoaded_ || !keymap_.isModified()) {
+        return;
+    }
+    keymap_.reset();
+    keyboardWidget_->update();
+    updateActions();
+}
+
+bool MainWindow::confirmDiscardChanges()
+{
+    if (!profileLoaded_ || !keymap_.isModified()) {
+        return true;
+    }
+
+    const auto answer = QMessageBox::question(
+        this,
+        QStringLiteral("Unsaved keymap changes"),
+        QStringLiteral("Export the modified profile before replacing it?"),
+        QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel,
+        QMessageBox::Save);
+    if (answer == QMessageBox::Cancel) {
+        return false;
+    }
+    if (answer == QMessageBox::Save) {
+        return exportProfile();
+    }
+    return true;
+}
+
+void MainWindow::updateActions()
+{
+    if (refreshButton_ == nullptr) {
+        return;
+    }
+    refreshButton_->setEnabled(!busy_);
+    importButton_->setEnabled(!busy_);
+    exportButton_->setEnabled(!busy_ && profileLoaded_);
+    resetButton_->setEnabled(!busy_ && profileLoaded_ && keymap_.isModified());
+}
+
+void MainWindow::closeEvent(QCloseEvent* event)
+{
+    if (confirmDiscardChanges()) {
+        event->accept();
+    } else {
+        event->ignore();
     }
 }

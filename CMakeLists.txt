@@ -11,6 +11,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+set(CMAKE_AUTORCC ON)
 
 find_package(Qt6 6.5 REQUIRED COMPONENTS Widgets)
 
@@ -30,6 +31,12 @@ add_library(hhkbs_core STATIC
     src/device/Transport.h
     src/keymap/Keymap.cpp
     src/keymap/Keymap.h
+    src/keymap/KeyboardLayout.cpp
+    src/keymap/KeyboardLayout.h
+    src/keymap/ProfileSerializer.cpp
+    src/keymap/ProfileSerializer.h
+    src/keymap/ScanCodeCatalog.cpp
+    src/keymap/ScanCodeCatalog.h
 )
 
 target_include_directories(hhkbs_core
@@ -41,6 +48,10 @@ target_compile_features(hhkbs_core PUBLIC cxx_std_20)
 
 add_executable(hhkbs
     src/main.cpp
+    src/gui/KeyAssignmentDialog.cpp
+    src/gui/KeyAssignmentDialog.h
+    src/gui/KeyboardWidget.cpp
+    src/gui/KeyboardWidget.h
     src/gui/MainWindow.cpp
     src/gui/MainWindow.h
     resources/resources.qrc

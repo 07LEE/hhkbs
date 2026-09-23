@@ -71,6 +71,14 @@ bool Keymap::isModified() const noexcept
     return layers_ != originalLayers_;
 }
 
+bool Keymap::isKeyModified(
+    const std::size_t layerIndex,
+    const std::size_t keyIndex) const
+{
+    validateIndices(layerIndex, keyIndex);
+    return layers_[layerIndex][keyIndex] != originalLayers_[layerIndex][keyIndex];
+}
+
 void Keymap::reset() noexcept
 {
     layers_ = originalLayers_;
