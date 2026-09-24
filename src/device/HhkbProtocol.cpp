@@ -44,6 +44,28 @@ Report encodeDataReadRequest(
     return report;
 }
 
+Report encodePadStateRequest(const std::size_t pad)
+{
+    if (pad >= gesturePadCount) {
+        throw std::invalid_argument("HHKB gesture pad must be between 0 and 3");
+    }
+    Report report{};
+    report[0] = 0x02;
+    report[1] = 0x11;
+    report[2] = 0x05;
+    report[3] = 0x01;
+    report[4] = static_cast<std::uint8_t>(pad);
+    return report;
+}
+
+Report encodePadStateWrite(const std::size_t pad, const bool on)
+{
+    auto report = encodePadStateRequest(pad);
+    report[0] = 0x03;
+    report[5] = on ? 1 : 0;
+    return report;
+}
+
 Report encodeProfileSwitchRequest(const std::uint16_t profile)
 {
     if (profile >= profileCount) {
@@ -75,6 +97,20 @@ Report encodeDataWriteRequest(
     report[3] = static_cast<std::uint8_t>(data.size());
     std::copy(data.begin(), data.end(), report.begin() + dataPayloadOffset);
     return report;
+}
+
+bool isNotification(const Report& report)
+{
+    return report[0] == 0x02 && report[1] == 0x11 && report[2] == 0x05;
+}
+
+std::optional<PadNotification> decodePadNotification(const Report& report)
+{
+    // 02 11 05 01 <pad> <state>: the 01 marks a gesture pad; other kinds are not understood.
+    if (!isNotification(report) || report[3] != 0x01 || report[4] >= gesturePadCount || report[5] > 1) {
+        return std::nullopt;
+    }
+    return PadNotification{report[4], report[5] == 1};
 }
 
 std::string decodeText(const Report& report, const std::size_t offset)

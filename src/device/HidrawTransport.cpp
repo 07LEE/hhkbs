@@ -1,6 +1,7 @@
 #include "device/HidrawTransport.h"
 
 #include "device/DeviceError.h"
+#include "device/HhkbProtocol.h"
 
 #include <cerrno>
 #include <cstring>
@@ -51,7 +52,7 @@ HidrawTransport::~HidrawTransport()
 Report HidrawTransport::exchange(const Report& request)
 {
     writeReport(request);
-    return readReport();
+    return readResponse(request);
 }
 
 std::vector<Report> HidrawTransport::exchange(
@@ -62,9 +63,24 @@ std::vector<Report> HidrawTransport::exchange(
     std::vector<Report> responses;
     responses.reserve(responseCount);
     for (std::size_t index = 0; index < responseCount; ++index) {
-        responses.push_back(readReport());
+        responses.push_back(readResponse(request));
     }
     return responses;
+}
+
+Report HidrawTransport::readResponse(const Report& request) const
+{
+    const bool asksForPad = protocol::isNotification(request) && request[0] == 0x02;
+    for (;;) {
+        auto report = readReport();
+        if (!protocol::isNotification(report)) {
+            return report;
+        }
+        // The answer to a pad request looks like an unsolicited report; it is the one for the pad asked about.
+        if (asksForPad && report[3] == request[3] && report[4] == request[4]) {
+            return report;
+        }
+    }
 }
 
 void HidrawTransport::waitFor(const short events) const

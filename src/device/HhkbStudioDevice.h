@@ -3,6 +3,7 @@
 #include "device/HhkbProtocol.h"
 #include "device/Transport.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -43,6 +44,12 @@ public:
     // Makes `profile` (0-3) the active profile, then confirms both answers and a
     // fresh read of the active profile agree.
     void switchProfile(std::uint16_t profile);
+
+    // Whether gesture pad 0-3 (left side, front left, front right, right side) is switched on.
+    [[nodiscard]] bool padState(std::size_t pad);
+
+    // Switches a gesture pad on or off, then reads the state back to confirm it took effect.
+    void setPadState(std::size_t pad, bool on);
 
     // Throws unless this is an HHKB Studio whose current profile is expectedProfile.
     void requireTarget(std::uint16_t expectedProfile);

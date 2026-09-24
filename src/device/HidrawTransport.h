@@ -28,6 +28,8 @@ private:
     void waitFor(short events) const;
     void writeReport(const Report& report) const;
     [[nodiscard]] Report readReport() const;
+    // The next report that answers `request`; reports the keyboard sends on its own are skipped.
+    [[nodiscard]] Report readResponse(const Report& request) const;
 
     int fileDescriptor_{-1};
     std::filesystem::path path_;
