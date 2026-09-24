@@ -3,6 +3,7 @@
 #include "device/DeviceDiscovery.h"
 #include "device/HidrawTransport.h"
 #include "device/HhkbStudioDevice.h"
+#include "keymap/BackupFiles.h"
 #include "keymap/KeyboardLayout.h"
 #include "keymap/ProfileFiles.h"
 #include "keymap/ProfileSerializer.h"
@@ -21,15 +22,6 @@ using hhkbs::keymap::Keymap;
 using hhkbs::keymap::KeyboardLayout;
 
 namespace {
-
-std::filesystem::path backupDirectory()
-{
-    if (const char* state = std::getenv("XDG_STATE_HOME"); state && *state)
-        return std::filesystem::path(state) / "hhkbs" / "backups";
-    if (const char* home = std::getenv("HOME"); home && *home)
-        return std::filesystem::path(home) / ".local" / "state" / "hhkbs" / "backups";
-    return std::filesystem::temp_directory_path() / "hhkbs-backups";
-}
 
 std::unique_ptr<hhkbs::device::HidrawTransport> openStudio()
 {
@@ -130,31 +122,25 @@ void MainWindow::pollScan()
 
 void MainWindow::beginApply()
 {
-    if (busy() || demo_ || !loaded_) return;
+    if (busy() || demo_ || !loaded_ || !applyTarget_) return;
     status_ = "Applying...";
     message_ = "Writing the profile to the keyboard. Do not unplug it.";
     auto bytes = keymap_.toBytes();
-    const auto target = selectedProfile_;
-    apply_ = std::async(std::launch::async, [bytes = std::move(bytes), target] {
+    const std::uint16_t profile = *applyTarget_;
+    apply_ = std::async(std::launch::async, [bytes = std::move(bytes), profile] {
         ApplyResult result{false, {}, bytes, 0};
         try {
             auto transport = openStudio();
             hhkbs::device::HhkbStudioDevice device(*transport);
-            const auto profile = target.value_or(device.readInformation().currentProfile);
             std::filesystem::path path;
             device.runOnProfile(profile, [&] {
                 device.requireTarget(profile);
                 const auto backup = device.readCurrentProfile();
 
                 // Keep a copy of what the keyboard held; without it a failed write cannot be undone by hand.
-                const auto directory = backupDirectory();
+                const auto directory = hhkbs::keymap::backupDirectory();
                 std::filesystem::create_directories(directory);
-                char stamp[32]{};
-                const std::time_t now = std::time(nullptr);
-                std::tm local{};
-                localtime_r(&now, &local);
-                std::strftime(stamp, sizeof stamp, "%Y%m%d-%H%M%S", &local);
-                path = directory / ("backup-" + std::string(stamp) + "-profile" + std::to_string(profile + 1) + ".toml");
+                path = directory / hhkbs::keymap::backupFileName(std::time(nullptr), profile);
                 hhkbs::keymap::writeProfile(path, hhkbs::keymap::Keymap(backup), false);
 
                 device.writeCurrentProfile(bytes, backup);
@@ -203,6 +189,7 @@ void MainWindow::perform(Action action)
     if (action == Action::Read) beginScan();
     else if (action == Action::SwitchProfile) beginScan(requestedProfile_);
     else if (action == Action::Import) openFiles(false);
+    else if (action == Action::Restore) openBackups();
     else if (action == Action::Close) close_ = true;
 }
 void MainWindow::openFiles(bool save)
@@ -210,6 +197,106 @@ void MainWindow::openFiles(bool save)
     dialog_ = save ? Dialog::Export : Dialog::Import;
     dialogError_.clear();
     std::snprintf(path_.data(), path_.size(), "%s", (directory_ / (save ? "profile.toml" : "")).c_str());
+}
+void MainWindow::openApply()
+{
+    applyTarget_ = selectedProfile_;
+    dialogError_.clear();
+    dialog_ = Dialog::Apply;
+}
+void MainWindow::openBackups()
+{
+    backups_ = hhkbs::keymap::listBackups(hhkbs::keymap::backupDirectory());
+    backupChoice_.reset();
+    dialogError_.clear();
+    dialog_ = Dialog::Backups;
+}
+bool MainWindow::loadBackup(const hhkbs::keymap::BackupEntry& entry)
+{
+    try {
+        auto profile = hhkbs::keymap::readProfile(entry.path);
+        keymap_ = std::move(profile);
+        savedBytes_ = keymap_.toBytes();
+        loaded_ = true;
+        selectedProfile_ = entry.profile;
+        summary_ = "Backup of Profile " + std::to_string(entry.profile + 1) + " from " + entry.timestamp;
+        status_ = "Loaded backup";
+        message_.clear();
+        finishDialog();
+        return true;
+    } catch (const std::exception& error) { dialogError_ = error.what(); }
+    return false;
+}
+void MainWindow::drawBackups()
+{
+    ImGui::TextUnformatted("Restore from backup");
+    ImGui::TextWrapped("A backup is saved before every apply. Choose one, then load it into the editor for the profile it came from "
+                       "or restore it to the keyboard right away.");
+    ImGui::TextDisabled("%s", hhkbs::keymap::backupDirectory().c_str());
+    ImGui::BeginChild("Backups", ImVec2(0, 250), ImGuiChildFlags_Borders);
+    if (backups_.empty()) ImGui::TextWrapped("No backups yet.");
+    for (std::size_t i=0; i<backups_.size(); ++i) {
+        const auto& entry = backups_[i];
+        const auto label = entry.timestamp + "    Profile " + std::to_string(entry.profile + 1);
+        ImGui::PushID(static_cast<int>(i));
+        if (ImGui::Selectable(label.c_str(), backupChoice_ == i)) backupChoice_ = i;
+        ImGui::PopID();
+    }
+    ImGui::EndChild();
+    ImGui::BeginDisabled(!backupChoice_);
+    if (ImGui::Button("Load into editor")) static_cast<void>(loadBackup(backups_[*backupChoice_]));
+    ImGui::SameLine();
+    ImGui::BeginDisabled(demo_);
+    if (ImGui::Button("Restore and apply") && loadBackup(backups_[*backupChoice_])) openApply();
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    if (ImGui::Button("Delete")) dialog_ = Dialog::DeleteBackup;
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    ImGui::BeginDisabled(backups_.empty());
+    if (ImGui::Button("Clean up...")) dialog_ = Dialog::CleanBackups;
+    ImGui::EndDisabled();
+}
+void MainWindow::drawCleanBackups()
+{
+    ImGui::TextUnformatted("Clean up backups");
+    ImGui::TextWrapped("Keep the newest backups of each profile and delete the rest. This cannot be undone.");
+    ImGui::SetNextItemWidth(120);
+    ImGui::InputInt("newest backups to keep per profile", &keepBackups_);
+    keepBackups_ = std::clamp(keepBackups_, 1, 999);
+    const auto surplus = hhkbs::keymap::backupsBeyondNewest(backups_, static_cast<std::size_t>(keepBackups_));
+    ImGui::TextWrapped("%zu of %zu backups will be deleted.", surplus.size(), backups_.size());
+    ImGui::BeginDisabled(surplus.empty());
+    if (ImGui::Button("Delete backups")) {
+        std::size_t deleted = 0;
+        std::string firstError;
+        for (const auto& entry : surplus) {
+            try {
+                hhkbs::keymap::deleteBackup(hhkbs::keymap::backupDirectory(), entry);
+                ++deleted;
+            } catch (const std::exception& error) { if (firstError.empty()) firstError = error.what(); }
+        }
+        openBackups();
+        message_ = std::to_string(deleted) + " backup(s) deleted";
+        dialogError_ = firstError;
+    }
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    if (ImGui::Button("Back")) dialog_ = Dialog::Backups;
+}
+void MainWindow::drawDeleteBackup()
+{
+    const auto& entry = backups_[*backupChoice_];
+    ImGui::TextUnformatted("Delete backup");
+    ImGui::TextWrapped("Delete the backup of Profile %d saved on %s? This cannot be undone.", entry.profile + 1, entry.timestamp.c_str());
+    if (ImGui::Button("Delete backup")) {
+        try {
+            hhkbs::keymap::deleteBackup(hhkbs::keymap::backupDirectory(), entry);
+            openBackups();
+        } catch (const std::exception& error) { dialogError_ = error.what(); }
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Back")) dialog_ = Dialog::Backups;
 }
 void MainWindow::finishDialog()
 {
@@ -291,6 +378,7 @@ void MainWindow::drawFiles()
                 keymap_ = std::move(profile);
                 savedBytes_ = keymap_.toBytes();
                 loaded_ = true;
+                selectedProfile_.reset();  // a file belongs to no keyboard profile until the user picks one
                 summary_ = "Imported " + target.filename().string();
                 status_ = "Imported profile";
                 message_.clear();
@@ -322,6 +410,9 @@ void MainWindow::drawDialog()
             perform(action);
         }
     } else if (dialog_ == Dialog::Import || dialog_ == Dialog::Export) drawFiles();
+    else if (dialog_ == Dialog::Backups) drawBackups();
+    else if (dialog_ == Dialog::DeleteBackup) drawDeleteBackup();
+    else if (dialog_ == Dialog::CleanBackups) drawCleanBackups();
     else if (dialog_ == Dialog::Overwrite) {
         ImGui::TextWrapped("Replace the existing file?\n%s", path_.data());
         if (ImGui::Button("Replace file")) saveFile(true);
@@ -329,14 +420,24 @@ void MainWindow::drawDialog()
         if (ImGui::Button("Back")) dialog_ = Dialog::Export;
     } else if (dialog_ == Dialog::Apply) {
         ImGui::TextUnformatted("Apply to keyboard");
-        const std::string target = selectedProfile_ ? "Profile " + std::to_string(*selectedProfile_ + 1)
-                                                    : "the keyboard's active profile";
-        ImGui::TextWrapped("Overwrite %s on the keyboard with this profile? "
-                           "The keyboard's current %s is saved as a backup first, and the result is read back to verify it. "
-                           "The keyboard returns to the profile it was on afterwards. "
-                           "Do not unplug the keyboard while writing.",
-                           target.c_str(), target.c_str());
+        ImGui::TextUnformatted("Profile to overwrite");
+        for (std::uint16_t i=0; i<4; ++i) {
+            if (i) ImGui::SameLine();
+            const bool chosen = applyTarget_ && *applyTarget_ == i;
+            if (chosen) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(.69f,.80f,.97f,1));
+            const auto label = "Profile " + std::to_string(i+1);
+            if (ImGui::Button(label.c_str(), ImVec2(96,32))) applyTarget_ = i;
+            if (chosen) ImGui::PopStyleColor();
+        }
+        if (applyTarget_) {
+            const auto target = "Profile " + std::to_string(*applyTarget_ + 1);
+            ImGui::TextWrapped("The keyboard's current %s is saved as a backup first, and the result is read back to verify it. "
+                               "The keyboard returns to the profile it was on afterwards. "
+                               "Do not unplug the keyboard while writing.", target.c_str());
+        } else ImGui::TextDisabled("Choose the profile to overwrite.");
+        ImGui::BeginDisabled(!applyTarget_);
         if (ImGui::Button("Apply")) { finishDialog(); beginApply(); }
+        ImGui::EndDisabled();
     } else if (dialog_ == Dialog::Defaults) {
         ImGui::TextWrapped("Restore the US Profile 1 defaults in the editor? "
                            "Restoring alone does not change the keyboard; use \"Restore and apply\" to write them right away.");
@@ -349,7 +450,7 @@ void MainWindow::drawDialog()
         if (ImGui::Button("Restore defaults")) { restore(); finishDialog(); }
         ImGui::SameLine();
         ImGui::BeginDisabled(demo_);
-        if (ImGui::Button("Restore and apply")) { restore(); finishDialog(); dialog_ = Dialog::Apply; }
+        if (ImGui::Button("Restore and apply")) { restore(); finishDialog(); openApply(); }
         ImGui::EndDisabled();
     }
     if (!dialogError_.empty()) ImGui::TextWrapped("%s", dialogError_.c_str());
@@ -437,6 +538,8 @@ void MainWindow::draw()
     ImGui::SameLine();
     if (ImGui::Button("Import")) request(Action::Import);
     ImGui::SameLine();
+    if (ImGui::Button("Restore from backup")) request(Action::Restore);
+    ImGui::SameLine();
     ImGui::BeginDisabled(!loaded_);
     if (ImGui::Button("Export")) openFiles(true);
     ImGui::SameLine();
@@ -449,7 +552,7 @@ void MainWindow::draw()
     ImGui::EndDisabled();
     ImGui::SameLine();
     ImGui::BeginDisabled(!loaded_ || demo_ || busy);
-    if (ImGui::Button("Apply to keyboard")) dialog_ = Dialog::Apply;
+    if (ImGui::Button("Apply to keyboard")) openApply();
     ImGui::EndDisabled();
     if (demo_) ImGui::TextDisabled("Demo mode never writes to a keyboard.");
     if (!message_.empty()) ImGui::TextWrapped("%s", message_.c_str());

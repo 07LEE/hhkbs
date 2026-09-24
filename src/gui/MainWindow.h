@@ -1,5 +1,6 @@
 #pragma once
 #include "gui/KeyAssignmentDialog.h"
+#include "keymap/BackupFiles.h"
 #include "keymap/Keymap.h"
 #include <array>
 #include <filesystem>
@@ -15,8 +16,8 @@ public:
     void requestClose();
     [[nodiscard]] bool shouldClose() const { return close_; }
 private:
-    enum class Action { None, Read, SwitchProfile, Import, Close };
-    enum class Dialog { None, Assign, Unsaved, Import, Export, Overwrite, Defaults, Apply };
+    enum class Action { None, Read, SwitchProfile, Import, Restore, Close };
+    enum class Dialog { None, Assign, Unsaved, Import, Export, Overwrite, Defaults, Apply, Backups, DeleteBackup, CleanBackups };
     struct ScanResult {
         std::string status;
         std::string detail;
@@ -38,6 +39,12 @@ private:
     void request(Action action);
     void perform(Action action);
     void openFiles(bool save);
+    void openBackups();
+    void openApply();
+    void drawBackups();
+    void drawDeleteBackup();
+    void drawCleanBackups();
+    [[nodiscard]] bool loadBackup(const hhkbs::keymap::BackupEntry& entry);
     void drawDialog();
     void drawFiles();
     void saveFile(bool overwrite);
@@ -46,11 +53,16 @@ private:
 
     hhkbs::keymap::Keymap keymap_;
     std::vector<std::uint8_t> savedBytes_;
+    std::vector<hhkbs::keymap::BackupEntry> backups_;
+    std::optional<std::size_t> backupChoice_;
+    int keepBackups_ = 5;
     std::future<ScanResult> scan_;
     std::future<ApplyResult> apply_;
     // The keyboard profile shown in the editor; only set once it has been read or applied.
     std::optional<std::uint16_t> selectedProfile_;
     std::optional<std::uint16_t> requestedProfile_;
+    // The profile the Apply dialog will overwrite; it can differ from the profile the editor content came from.
+    std::optional<std::uint16_t> applyTarget_;
     bool demo_ = false;
     std::string status_ = "No device";
     std::string summary_;
