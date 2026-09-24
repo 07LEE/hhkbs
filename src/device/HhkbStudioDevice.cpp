@@ -4,6 +4,7 @@
 #include "keymap/Keymap.h"
 
 #include <algorithm>
+#include <exception>
 #include <limits>
 
 namespace hhkbs::device {
@@ -50,6 +51,90 @@ std::vector<std::uint8_t> HhkbStudioDevice::readCurrentProfile()
     return readData(
         0,
         static_cast<std::uint16_t>(keymap::Keymap::profileByteCount));
+}
+
+void HhkbStudioDevice::requireTarget(const std::uint16_t expectedProfile)
+{
+    if (readProductName() != "HHKB-Studio") {
+        throw DeviceError(
+            DeviceErrorCode::Protocol,
+            "The connected device is not an HHKB Studio");
+    }
+    const auto current = protocol::decodeBigEndian16(
+        readProperty(protocol::Property::CurrentProfile),
+        protocol::textPayloadOffset);
+    if (current != expectedProfile) {
+        throw DeviceError(
+            DeviceErrorCode::Protocol,
+            "The keyboard's active profile changed since it was read. "
+            "Read from the keyboard again before applying.");
+    }
+}
+
+void HhkbStudioDevice::writeCurrentProfile(
+    const std::vector<std::uint8_t>& profile,
+    const std::vector<std::uint8_t>& backup)
+{
+    if (profile.size() != keymap::Keymap::profileByteCount
+        || backup.size() != keymap::Keymap::profileByteCount) {
+        throw DeviceError(
+            DeviceErrorCode::Protocol,
+            "Profile data has an unexpected length");
+    }
+
+    try {
+        writeData(0, profile);
+    } catch (const std::exception& error) {
+        const bool restored = tryRestore(backup);
+        throw DeviceError(
+            DeviceErrorCode::InputOutput,
+            std::string("Writing the profile failed: ") + error.what()
+                + (restored
+                       ? " The previous profile was restored."
+                       : " The previous profile could not be restored; "
+                         "apply the saved backup to recover."));
+    }
+
+    if (readCurrentProfile() != profile) {
+        const bool restored = tryRestore(backup);
+        throw DeviceError(
+            DeviceErrorCode::Protocol,
+            std::string("The keyboard did not keep the written profile. ")
+                + (restored
+                       ? "The previous profile was restored."
+                       : "The previous profile could not be restored; "
+                         "apply the saved backup to recover."));
+    }
+}
+
+bool HhkbStudioDevice::tryRestore(const std::vector<std::uint8_t>& backup)
+{
+    try {
+        writeData(0, backup);
+        return readCurrentProfile() == backup;
+    } catch (const std::exception&) {
+        return false;
+    }
+}
+
+void HhkbStudioDevice::writeData(
+    const std::uint16_t start,
+    const std::vector<std::uint8_t>& data)
+{
+    for (std::size_t offset = 0; offset < data.size();
+         offset += protocol::maximumDataPayload) {
+        const auto count = std::min<std::size_t>(
+            protocol::maximumDataPayload,
+            data.size() - offset);
+        const std::vector<std::uint8_t> chunk(
+            data.begin() + static_cast<std::ptrdiff_t>(offset),
+            data.begin() + static_cast<std::ptrdiff_t>(offset + count));
+        // The response layout is not documented, so success is judged by the
+        // read-back comparison rather than by the acknowledgement.
+        static_cast<void>(transport_.exchange(protocol::encodeDataWriteRequest(
+            static_cast<std::uint16_t>(start + offset),
+            chunk)));
+    }
 }
 
 Report HhkbStudioDevice::readProperty(const protocol::Property property)

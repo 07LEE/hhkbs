@@ -28,11 +28,23 @@ public:
     [[nodiscard]] KeyboardInformation readInformation();
     [[nodiscard]] std::vector<std::uint8_t> readCurrentProfile();
 
+    // Throws unless this is an HHKB Studio whose current profile is expectedProfile.
+    void requireTarget(std::uint16_t expectedProfile);
+
+    // Writes the current profile, reads it back and compares. If the write fails
+    // or the read-back differs, `backup` is written back on a best-effort basis
+    // before the error is thrown.
+    void writeCurrentProfile(
+        const std::vector<std::uint8_t>& profile,
+        const std::vector<std::uint8_t>& backup);
+
 private:
     [[nodiscard]] Report readProperty(protocol::Property property);
     [[nodiscard]] std::vector<std::uint8_t> readData(
         std::uint16_t start,
         std::uint16_t length);
+    void writeData(std::uint16_t start, const std::vector<std::uint8_t>& data);
+    [[nodiscard]] bool tryRestore(const std::vector<std::uint8_t>& backup);
 
     Transport& transport_;
 };

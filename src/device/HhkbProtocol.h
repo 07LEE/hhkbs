@@ -28,6 +28,9 @@ inline constexpr std::uint8_t maximumDataPayload = 26;
 [[nodiscard]] Report encodeDataReadRequest(
     std::uint16_t address,
     std::uint8_t length);
+[[nodiscard]] Report encodeDataWriteRequest(
+    std::uint16_t address,
+    const std::vector<std::uint8_t>& data);
 
 [[nodiscard]] std::string decodeText(
     const Report& report,

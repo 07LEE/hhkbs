@@ -1,4 +1,5 @@
 #include "device/DeviceDiscovery.h"
+#include "device/DeviceError.h"
 #include "device/HhkbProtocol.h"
 #include "device/HhkbStudioDevice.h"
 #include "device/Transport.h"
@@ -95,6 +96,161 @@ public:
 
     std::vector<Report> requests;
 };
+
+// Behaves like a keyboard that stores its profile, so writes can be read back.
+class StorageTransport final : public Transport {
+public:
+    StorageTransport()
+        : memory(Keymap::profileByteCount)
+    {
+        for (std::size_t index = 0; index < memory.size(); ++index) {
+            memory[index] = static_cast<std::uint8_t>(index * 7U);
+        }
+    }
+
+    [[nodiscard]] Report exchange(const Report& request) override
+    {
+        Report response{};
+        const auto address = static_cast<std::size_t>(
+            (static_cast<std::uint16_t>(request[1]) << 8U) | request[2]);
+
+        if (request[0] == 0x12) {
+            for (std::size_t index = 0; index < request[3]; ++index) {
+                response[4 + index] = memory.at(address + index);
+            }
+        } else if (request[0] == 0x13) {
+            ++writes;
+            if (failWriteNumber != 0 && writes == failWriteNumber) {
+                throw hhkbs::device::DeviceError(
+                    hhkbs::device::DeviceErrorCode::Disconnected,
+                    "unplugged");
+            }
+            for (std::size_t index = 0; index < request[3]; ++index) {
+                const auto value = request[4 + index];
+                memory.at(address + index) =
+                    corruptWrites ? static_cast<std::uint8_t>(~value) : value;
+            }
+        } else if (address == 0x1001) {
+            writeText(response, productName);
+        } else if (address == 0x1101) {
+            response[4] = currentProfile;
+        }
+        return response;
+    }
+
+    std::vector<std::uint8_t> memory;
+    std::string productName = "HHKB-Studio";
+    std::uint8_t currentProfile = 2;
+    std::size_t writes = 0;
+    std::size_t failWriteNumber = 0;
+    bool corruptWrites = false;
+};
+
+std::vector<std::uint8_t> patternProfile(const std::uint8_t seed)
+{
+    std::vector<std::uint8_t> profile(Keymap::profileByteCount);
+    for (std::size_t index = 0; index < profile.size(); ++index) {
+        profile[index] = static_cast<std::uint8_t>(index + seed);
+    }
+    return profile;
+}
+
+void profileWriteIsVerifiedByReadBack()
+{
+    StorageTransport transport;
+    HhkbStudioDevice device(transport);
+    const auto backup = device.readCurrentProfile();
+    const auto profile = patternProfile(3);
+
+    device.requireTarget(2);
+    device.writeCurrentProfile(profile, backup);
+
+    require(transport.memory == profile, "profile was not stored on the device");
+    constexpr std::size_t expectedWrites = (Keymap::profileByteCount + 25) / 26;
+    require(transport.writes == expectedWrites, "profile used unexpected write chunks");
+}
+
+void failedWriteRestoresBackup()
+{
+    StorageTransport transport;
+    HhkbStudioDevice device(transport);
+    const auto backup = device.readCurrentProfile();
+
+    transport.failWriteNumber = 5;
+    bool threw = false;
+    try {
+        device.writeCurrentProfile(patternProfile(3), backup);
+    } catch (const hhkbs::device::DeviceError&) {
+        threw = true;
+    }
+
+    require(threw, "an interrupted write was not reported");
+    require(transport.memory == backup, "backup was not restored after a failed write");
+}
+
+void mismatchedReadBackRestoresBackup()
+{
+    StorageTransport transport;
+    HhkbStudioDevice device(transport);
+    const auto backup = device.readCurrentProfile();
+
+    transport.corruptWrites = true;
+    bool threw = false;
+    try {
+        device.writeCurrentProfile(patternProfile(3), backup);
+    } catch (const hhkbs::device::DeviceError& error) {
+        threw = error.code() == hhkbs::device::DeviceErrorCode::Protocol;
+    }
+
+    require(threw, "a read-back mismatch was not reported");
+}
+
+void writeTargetIsChecked()
+{
+    StorageTransport wrongProfile;
+    HhkbStudioDevice device(wrongProfile);
+    bool threw = false;
+    try {
+        device.requireTarget(1);
+    } catch (const hhkbs::device::DeviceError&) {
+        threw = true;
+    }
+    require(threw, "a changed active profile was not rejected");
+
+    StorageTransport wrongDevice;
+    wrongDevice.productName = "Other";
+    HhkbStudioDevice other(wrongDevice);
+    threw = false;
+    try {
+        other.requireTarget(2);
+    } catch (const hhkbs::device::DeviceError&) {
+        threw = true;
+    }
+    require(threw, "a non-HHKB device was not rejected");
+
+    StorageTransport shortProfile;
+    HhkbStudioDevice shortDevice(shortProfile);
+    threw = false;
+    try {
+        shortDevice.writeCurrentProfile({1, 2, 3}, patternProfile(0));
+    } catch (const hhkbs::device::DeviceError&) {
+        threw = true;
+    }
+    require(threw, "a short profile was accepted");
+    require(shortProfile.writes == 0, "a rejected profile was still sent");
+}
+
+void writePacketIsEncoded()
+{
+    const auto request = hhkbs::device::protocol::encodeDataWriteRequest(
+        0x0102,
+        {0xAA, 0xBB, 0xCC});
+    require(
+        request[0] == 0x13 && request[1] == 0x01 && request[2] == 0x02
+            && request[3] == 3 && request[4] == 0xAA && request[6] == 0xCC
+            && request[7] == 0,
+        "write request was encoded incorrectly");
+}
 
 void informationCommandsAreDecoded()
 {
@@ -213,6 +369,11 @@ int main()
         protocolPacketsAreEncodedAndDecoded();
         profileIsReadInBoundedChunks();
         supportedInterfacesAreDiscovered();
+        writePacketIsEncoded();
+        profileWriteIsVerifiedByReadBack();
+        failedWriteRestoresBackup();
+        mismatchedReadBackRestoresBackup();
+        writeTargetIsChecked();
     } catch (const std::exception& error) {
         std::cerr << "HHKB device test failed: " << error.what() << '\n';
         return 1;

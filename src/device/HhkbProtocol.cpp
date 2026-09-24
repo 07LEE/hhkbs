@@ -1,5 +1,6 @@
 #include "device/HhkbProtocol.h"
 
+#include <algorithm>
 #include <stdexcept>
 
 namespace hhkbs::device::protocol {
@@ -40,6 +41,23 @@ Report encodeDataReadRequest(
     report[1] = static_cast<std::uint8_t>(address >> 8U);
     report[2] = static_cast<std::uint8_t>(address & 0xFFU);
     report[3] = length;
+    return report;
+}
+
+Report encodeDataWriteRequest(
+    const std::uint16_t address,
+    const std::vector<std::uint8_t>& data)
+{
+    if (data.empty() || data.size() > maximumDataPayload) {
+        throw std::invalid_argument("HHKB data write length must be between 1 and 26");
+    }
+
+    Report report{};
+    report[0] = 0x13;
+    report[1] = static_cast<std::uint8_t>(address >> 8U);
+    report[2] = static_cast<std::uint8_t>(address & 0xFFU);
+    report[3] = static_cast<std::uint8_t>(data.size());
+    std::copy(data.begin(), data.end(), report.begin() + dataPayloadOffset);
     return report;
 }
 

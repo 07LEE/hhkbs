@@ -4,6 +4,7 @@
 #include <array>
 #include <filesystem>
 #include <future>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -15,14 +16,23 @@ public:
     [[nodiscard]] bool shouldClose() const { return close_; }
 private:
     enum class Action { None, Read, Import, Close };
-    enum class Dialog { None, Assign, Unsaved, Import, Export, Overwrite, Defaults };
+    enum class Dialog { None, Assign, Unsaved, Import, Export, Overwrite, Defaults, Apply };
     struct ScanResult {
         std::string status;
         std::string detail;
         std::vector<std::uint8_t> bytes;
+        std::optional<std::uint16_t> profile;
+    };
+    struct ApplyResult {
+        bool ok = false;
+        std::string message;
+        std::vector<std::uint8_t> bytes;
     };
     void beginScan();
     void pollScan();
+    void beginApply();
+    void pollApply();
+    [[nodiscard]] bool busy() const { return scan_.valid() || apply_.valid(); }
     void request(Action action);
     void perform(Action action);
     void openFiles(bool save);
@@ -35,6 +45,9 @@ private:
     hhkbs::keymap::Keymap keymap_;
     std::vector<std::uint8_t> savedBytes_;
     std::future<ScanResult> scan_;
+    std::future<ApplyResult> apply_;
+    std::optional<std::uint16_t> deviceProfile_;
+    bool demo_ = false;
     std::string status_ = "No device";
     std::string summary_;
     std::string message_;
