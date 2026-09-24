@@ -40,6 +40,7 @@ private:
     void perform(Action action);
     void openFiles(bool save);
     void openBackups();
+    void openApply();
     void drawBackups();
     void drawDeleteBackup();
     void drawCleanBackups();
@@ -60,6 +61,8 @@ private:
     // The keyboard profile shown in the editor; only set once it has been read or applied.
     std::optional<std::uint16_t> selectedProfile_;
     std::optional<std::uint16_t> requestedProfile_;
+    // The profile the Apply dialog will overwrite; it can differ from the profile the editor content came from.
+    std::optional<std::uint16_t> applyTarget_;
     bool demo_ = false;
     std::string status_ = "No device";
     std::string summary_;

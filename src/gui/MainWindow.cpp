@@ -122,17 +122,16 @@ void MainWindow::pollScan()
 
 void MainWindow::beginApply()
 {
-    if (busy() || demo_ || !loaded_) return;
+    if (busy() || demo_ || !loaded_ || !applyTarget_) return;
     status_ = "Applying...";
     message_ = "Writing the profile to the keyboard. Do not unplug it.";
     auto bytes = keymap_.toBytes();
-    const auto target = selectedProfile_;
-    apply_ = std::async(std::launch::async, [bytes = std::move(bytes), target] {
+    const std::uint16_t profile = *applyTarget_;
+    apply_ = std::async(std::launch::async, [bytes = std::move(bytes), profile] {
         ApplyResult result{false, {}, bytes, 0};
         try {
             auto transport = openStudio();
             hhkbs::device::HhkbStudioDevice device(*transport);
-            const auto profile = target.value_or(device.readInformation().currentProfile);
             std::filesystem::path path;
             device.runOnProfile(profile, [&] {
                 device.requireTarget(profile);
@@ -199,6 +198,12 @@ void MainWindow::openFiles(bool save)
     dialogError_.clear();
     std::snprintf(path_.data(), path_.size(), "%s", (directory_ / (save ? "profile.toml" : "")).c_str());
 }
+void MainWindow::openApply()
+{
+    applyTarget_ = selectedProfile_;
+    dialogError_.clear();
+    dialog_ = Dialog::Apply;
+}
 void MainWindow::openBackups()
 {
     backups_ = hhkbs::keymap::listBackups(hhkbs::keymap::backupDirectory());
@@ -242,7 +247,7 @@ void MainWindow::drawBackups()
     if (ImGui::Button("Load into editor")) static_cast<void>(loadBackup(backups_[*backupChoice_]));
     ImGui::SameLine();
     ImGui::BeginDisabled(demo_);
-    if (ImGui::Button("Restore and apply") && loadBackup(backups_[*backupChoice_])) dialog_ = Dialog::Apply;
+    if (ImGui::Button("Restore and apply") && loadBackup(backups_[*backupChoice_])) openApply();
     ImGui::EndDisabled();
     ImGui::SameLine();
     if (ImGui::Button("Delete")) dialog_ = Dialog::DeleteBackup;
@@ -414,14 +419,24 @@ void MainWindow::drawDialog()
         if (ImGui::Button("Back")) dialog_ = Dialog::Export;
     } else if (dialog_ == Dialog::Apply) {
         ImGui::TextUnformatted("Apply to keyboard");
-        const std::string target = selectedProfile_ ? "Profile " + std::to_string(*selectedProfile_ + 1)
-                                                    : "the keyboard's active profile";
-        ImGui::TextWrapped("Overwrite %s on the keyboard with this profile? "
-                           "The keyboard's current %s is saved as a backup first, and the result is read back to verify it. "
-                           "The keyboard returns to the profile it was on afterwards. "
-                           "Do not unplug the keyboard while writing.",
-                           target.c_str(), target.c_str());
+        ImGui::TextUnformatted("Profile to overwrite");
+        for (std::uint16_t i=0; i<4; ++i) {
+            if (i) ImGui::SameLine();
+            const bool chosen = applyTarget_ && *applyTarget_ == i;
+            if (chosen) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(.69f,.80f,.97f,1));
+            const auto label = "Profile " + std::to_string(i+1);
+            if (ImGui::Button(label.c_str(), ImVec2(96,32))) applyTarget_ = i;
+            if (chosen) ImGui::PopStyleColor();
+        }
+        if (applyTarget_) {
+            const auto target = "Profile " + std::to_string(*applyTarget_ + 1);
+            ImGui::TextWrapped("The keyboard's current %s is saved as a backup first, and the result is read back to verify it. "
+                               "The keyboard returns to the profile it was on afterwards. "
+                               "Do not unplug the keyboard while writing.", target.c_str());
+        } else ImGui::TextDisabled("Choose the profile to overwrite.");
+        ImGui::BeginDisabled(!applyTarget_);
         if (ImGui::Button("Apply")) { finishDialog(); beginApply(); }
+        ImGui::EndDisabled();
     } else if (dialog_ == Dialog::Defaults) {
         ImGui::TextWrapped("Restore the US Profile 1 defaults in the editor? "
                            "Restoring alone does not change the keyboard; use \"Restore and apply\" to write them right away.");
@@ -434,7 +449,7 @@ void MainWindow::drawDialog()
         if (ImGui::Button("Restore defaults")) { restore(); finishDialog(); }
         ImGui::SameLine();
         ImGui::BeginDisabled(demo_);
-        if (ImGui::Button("Restore and apply")) { restore(); finishDialog(); dialog_ = Dialog::Apply; }
+        if (ImGui::Button("Restore and apply")) { restore(); finishDialog(); openApply(); }
         ImGui::EndDisabled();
     }
     if (!dialogError_.empty()) ImGui::TextWrapped("%s", dialogError_.c_str());
@@ -536,7 +551,7 @@ void MainWindow::draw()
     ImGui::EndDisabled();
     ImGui::SameLine();
     ImGui::BeginDisabled(!loaded_ || demo_ || busy);
-    if (ImGui::Button("Apply to keyboard")) dialog_ = Dialog::Apply;
+    if (ImGui::Button("Apply to keyboard")) openApply();
     ImGui::EndDisabled();
     if (demo_) ImGui::TextDisabled("Demo mode never writes to a keyboard.");
     if (!message_.empty()) ImGui::TextWrapped("%s", message_.c_str());
