@@ -2,7 +2,10 @@
 
 Unofficial HHKB Studio keymap editor for the US layout on Linux.
 
-![HHKBS editing an HHKB Studio US profile](docs/images/hhkbs-main.png)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/hhkbs-main-dark.png">
+  <img alt="HHKBS editing an HHKB Studio US profile" src="docs/images/hhkbs-main-light.png">
+</picture>
 
 ## Download
 

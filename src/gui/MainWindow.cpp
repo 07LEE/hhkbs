@@ -1,4 +1,6 @@
 #include "gui/MainWindow.h"
+#include "gui/Theme.h"
+#include "gui/DialogWidgets.h"
 #include "gui/KeyboardWidget.h"
 #include "device/DeviceDiscovery.h"
 #include "device/HidrawTransport.h"
@@ -10,6 +12,7 @@
 #include <imgui.h>
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
@@ -25,6 +28,17 @@ using hhkbs::keymap::Keymap;
 using hhkbs::keymap::KeyboardLayout;
 
 namespace {
+
+constexpr const char* layerNames[] = {"Base", "Fn1", "Fn2", "Fn3"};
+
+// The legend printed on a key, e.g. "Esc" or "Left side Up".
+std::string keyName(std::size_t slot)
+{
+    for (const auto* keys : {&KeyboardLayout::usStudio(), &KeyboardLayout::gesturePads()})
+        for (const auto& key : *keys)
+            if (key.slot == slot) return key.legend;
+    return "Key " + std::to_string(slot);
+}
 
 std::unique_ptr<hhkbs::device::HidrawTransport> openStudio()
 {
@@ -235,7 +249,8 @@ void MainWindow::openFiles(bool save)
 {
     dialog_ = save ? Dialog::Export : Dialog::Import;
     dialogError_.clear();
-    std::snprintf(path_.data(), path_.size(), "%s", (directory_ / (save ? "profile.toml" : "")).c_str());
+    path_[0] = '\0';
+    std::snprintf(fileName_.data(), fileName_.size(), "%s", save ? "profile.toml" : "");
 }
 void MainWindow::openApply()
 {
@@ -279,74 +294,81 @@ void MainWindow::drawBackupList()
 {
     ImGui::TextDisabled("%s", hhkbs::keymap::backupDirectory().c_str());
     ImGui::BeginChild("Backups", ImVec2(0, 230), ImGuiChildFlags_Borders);
-    if (backups_.empty()) ImGui::TextWrapped("No backups yet.");
+    if (backups_.empty()) ImGui::TextDisabled("No backups yet. One is saved before every apply.");
     for (std::size_t i=0; i<backups_.size(); ++i) {
         const auto& entry = backups_[i];
-        const auto label = entry.timestamp + "    Profile " + std::to_string(entry.profile + 1);
+        const auto profile = "Profile " + std::to_string(entry.profile + 1);
+        const float rowX = ImGui::GetCursorPosX(), rowWidth = ImGui::GetContentRegionAvail().x;
         ImGui::PushID(static_cast<int>(i));
-        if (ImGui::Selectable(label.c_str(), backupChoice_ == i)) backupChoice_ = i;
+        if (ImGui::Selectable(entry.timestamp.c_str(), backupChoice_ == i)) backupChoice_ = i;
+        // The profile sits in its own right-hand column, dimmed, on the same line as the date.
+        ImGui::SameLine(rowX + rowWidth - ImGui::CalcTextSize(profile.c_str()).x - 8);
+        ImGui::TextDisabled("%s", profile.c_str());
         ImGui::PopID();
     }
     ImGui::EndChild();
 }
 void MainWindow::drawBackups()
 {
-    ImGui::TextUnformatted("Backups");
-    ImGui::TextWrapped("A backup is saved before every apply.");
+    dialog::title("Backups");
+    dialog::hint("A backup is saved before every apply.");
     if (!ImGui::BeginTabBar("BackupTabs")) return;
+    const bool chosen = backupChoice_.has_value();
     if (ImGui::BeginTabItem("Restore")) {
-        ImGui::TextWrapped("Choose one, then load it into the editor for the profile it came from or restore it to the keyboard right away.");
+        dialog::hint("Choose one, then load it into the editor for the profile it came from "
+                     "or restore it to the keyboard right away.");
         drawBackupList();
-        ImGui::BeginDisabled(!backupChoice_);
-        if (ImGui::Button("Load into editor")) requestLoadBackup(backups_[*backupChoice_], false);
-        ImGui::SameLine();
-        ImGui::BeginDisabled(demo_);
-        if (ImGui::Button("Restore and apply")) requestLoadBackup(backups_[*backupChoice_], true);
-        ImGui::EndDisabled();
-        ImGui::EndDisabled();
-        ImGui::SameLine();
-        if (ImGui::Button("Cancel")) cancelDialog();
+        dialog::error(dialogError_);
+        const int hit = dialog::footer({{"Cancel"},
+                                        {"Load into editor", false, false, chosen},
+                                        {"Restore and apply", true, false, chosen && !demo_}});
+        if (hit == 0) cancelDialog();
+        else if (hit == 1) requestLoadBackup(backups_[*backupChoice_], false);
+        else if (hit == 2) requestLoadBackup(backups_[*backupChoice_], true);
         ImGui::EndTabItem();
     }
     // Coming back from a delete or clean-up lands on the tab the user left.
     const auto flags = selectManageTab_ ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None;
     selectManageTab_ = false;
     if (ImGui::BeginTabItem("Manage", nullptr, flags)) {
-        ImGui::TextWrapped("Delete the backups you no longer need. HHKBS never deletes them on its own.");
+        dialog::hint("Delete the backups you no longer need. HHKBS never deletes them on its own.");
         drawBackupList();
-        ImGui::BeginDisabled(!backupChoice_);
-        if (ImGui::Button("Delete")) dialog_ = Dialog::DeleteBackup;
-        ImGui::EndDisabled();
-        ImGui::SameLine();
-        ImGui::BeginDisabled(backups_.empty());
-        if (ImGui::Button("Clean up...")) dialog_ = Dialog::CleanBackups;
-        ImGui::EndDisabled();
-        ImGui::SameLine();
-        ImGui::BeginDisabled(!std::filesystem::is_directory(hhkbs::keymap::backupDirectory()));
-        if (ImGui::Button("Open folder")) {
+        dialog::error(dialogError_);
+        const int hit = dialog::footer({{"Open folder", false, false, std::filesystem::is_directory(hhkbs::keymap::backupDirectory())},
+                                        {"Clean up...", false, false, !backups_.empty()},
+                                        {"Delete", false, true, chosen},
+                                        {"Close"}});
+        if (hit == 0) {
             if (!commandExists("xdg-open"))
                 dialogError_ = "xdg-open was not found. Open " + hhkbs::keymap::backupDirectory().string() + " yourself.";
             else if (!openFolder(hhkbs::keymap::backupDirectory())) dialogError_ = "Could not open the folder.";
             else dialogError_.clear();
-        }
-        ImGui::EndDisabled();
-        ImGui::SameLine();
-        if (ImGui::Button("Cancel")) cancelDialog();
+        } else if (hit == 1) dialog_ = Dialog::CleanBackups;
+        else if (hit == 2) dialog_ = Dialog::DeleteBackup;
+        else if (hit == 3) cancelDialog();
         ImGui::EndTabItem();
     }
     ImGui::EndTabBar();
 }
 void MainWindow::drawCleanBackups()
 {
-    ImGui::TextUnformatted("Clean up backups");
-    ImGui::TextWrapped("Keep the newest backups of each profile and delete the rest. This cannot be undone.");
-    ImGui::SetNextItemWidth(120);
-    ImGui::InputInt("newest backups to keep per profile", &keepBackups_);
+    dialog::title("Clean up backups");
+    dialog::hint("Keep the newest backups of each profile and delete the rest. This cannot be undone.");
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted("Keep the newest");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(110);
+    ImGui::InputInt("##keep", &keepBackups_);
     keepBackups_ = std::clamp(keepBackups_, 1, 999);
+    ImGui::SameLine();
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted("backups of each profile");
     const auto surplus = hhkbs::keymap::backupsBeyondNewest(backups_, static_cast<std::size_t>(keepBackups_));
     ImGui::TextWrapped("%zu of %zu backups will be deleted.", surplus.size(), backups_.size());
-    ImGui::BeginDisabled(surplus.empty());
-    if (ImGui::Button("Delete backups")) {
+    dialog::error(dialogError_);
+    const int hit = dialog::footer({{"Back"}, {"Delete backups", false, true, !surplus.empty()}});
+    if (hit == 0) { dialog_ = Dialog::Backups; selectManageTab_ = true; }
+    else if (hit == 1) {
         std::size_t deleted = 0;
         std::string firstError;
         for (const auto& entry : surplus) {
@@ -359,23 +381,21 @@ void MainWindow::drawCleanBackups()
         message_ = std::to_string(deleted) + " backup(s) deleted";
         dialogError_ = firstError;
     }
-    ImGui::EndDisabled();
-    ImGui::SameLine();
-    if (ImGui::Button("Back")) { dialog_ = Dialog::Backups; selectManageTab_ = true; }
 }
 void MainWindow::drawDeleteBackup()
 {
     const auto& entry = backups_[*backupChoice_];
-    ImGui::TextUnformatted("Delete backup");
+    dialog::title("Delete backup");
     ImGui::TextWrapped("Delete the backup of Profile %d saved on %s? This cannot be undone.", entry.profile + 1, entry.timestamp.c_str());
-    if (ImGui::Button("Delete backup")) {
+    dialog::error(dialogError_);
+    const int hit = dialog::footer({{"Back"}, {"Delete backup", false, true}});
+    if (hit == 0) { dialog_ = Dialog::Backups; selectManageTab_ = true; }
+    else if (hit == 1) {
         try {
             hhkbs::keymap::deleteBackup(hhkbs::keymap::backupDirectory(), entry);
             openBackups(true);
         } catch (const std::exception& error) { dialogError_ = error.what(); }
     }
-    ImGui::SameLine();
-    if (ImGui::Button("Back")) { dialog_ = Dialog::Backups; selectManageTab_ = true; }
 }
 void MainWindow::cancelDialog()
 {
@@ -404,73 +424,175 @@ void MainWindow::saveFile(bool overwrite)
     } catch (const std::exception& error) { dialogError_ = error.what(); dialog_ = Dialog::Export; }
 }
 
+namespace {
+std::string fileTime(const std::filesystem::file_time_type& time)
+{
+    const auto system = std::chrono::clock_cast<std::chrono::system_clock>(time);
+    const std::time_t seconds = std::chrono::system_clock::to_time_t(system);
+    std::tm local{};
+    ::localtime_r(&seconds, &local);
+    char text[32];
+    std::strftime(text, sizeof text, "%Y-%m-%d %H:%M", &local);
+    return text;
+}
+
+std::string fileSize(std::uintmax_t bytes)
+{
+    char text[32];
+    if (bytes < 1024) std::snprintf(text, sizeof text, "%ju B", bytes);
+    else std::snprintf(text, sizeof text, "%.1f KB", static_cast<double>(bytes) / 1024.0);
+    return text;
+}
+
+void drawFolderIcon(ImDrawList* draw, ImVec2 topLeft, float height)
+{
+    const float w = height * 1.05f, h = height * .7f;
+    const ImVec2 min(topLeft.x, topLeft.y + (height - h) / 2);
+    const ImU32 color = ImGui::GetColorU32(ImGuiCol_TextDisabled);
+    draw->AddRectFilled(min, ImVec2(min.x + w * .45f, min.y + h * .3f), color, 2.f);
+    draw->AddRectFilled(ImVec2(min.x, min.y + h * .15f), ImVec2(min.x + w, min.y + h), color, 2.f);
+}
+}
+
 void MainWindow::drawFiles()
 {
     const bool save = dialog_ == Dialog::Export;
-    ImGui::TextUnformatted(save ? "Export TOML profile" : "Import TOML profile");
-    ImGui::TextWrapped("Folder: %s", directory_.c_str());
-    if (ImGui::Button("Parent folder")) directory_ = directory_.parent_path().empty() ? "/" : directory_.parent_path();
-    ImGui::SameLine();
-    if (ImGui::Button("Open path folder")) {
-        std::error_code ec;
-        auto entered = std::filesystem::path(path_.data());
-        if (std::filesystem::is_directory(entered, ec)) directory_ = entered;
-        else if (std::filesystem::is_directory(entered.parent_path(), ec)) directory_ = entered.parent_path();
-        else dialogError_ = "That folder is unavailable.";
+    dialog::title(save ? "Export TOML profile" : "Import TOML profile");
+
+    // Path bar: up button plus an editable folder; typing a .toml file path selects that file.
+    if (shownDir_ != directory_) {
+        std::snprintf(dirInput_.data(), dirInput_.size(), "%s", directory_.c_str());
+        shownDir_ = directory_;
     }
-    ImGui::BeginChild("Files", ImVec2(0, 250), ImGuiChildFlags_Borders);
-    struct Entry { std::filesystem::path path; bool directory; };
+    const auto goTo = [this](const std::filesystem::path& folder) {
+        std::error_code ec;
+        const auto canonical = std::filesystem::weakly_canonical(folder, ec);
+        directory_ = ec ? folder : canonical;
+        path_[0] = '\0';
+        dialogError_.clear();
+    };
+    if (ImGui::ArrowButton("##up", ImGuiDir_Up)) goTo(directory_.parent_path().empty() ? std::filesystem::path("/") : directory_.parent_path());
+    ImGui::SetItemTooltip("Parent folder");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(-1);
+    if (ImGui::InputText("##dir", dirInput_.data(), dirInput_.size(), ImGuiInputTextFlags_EnterReturnsTrue)) {
+        std::error_code ec;
+        const std::filesystem::path entered(dirInput_.data());
+        if (std::filesystem::is_directory(entered, ec)) goTo(entered);
+        else if (std::filesystem::is_regular_file(entered, ec)) {
+            goTo(entered.parent_path());
+            std::snprintf(path_.data(), path_.size(), "%s", (directory_ / entered.filename()).c_str());
+            std::snprintf(fileName_.data(), fileName_.size(), "%s", entered.filename().c_str());
+        } else dialogError_ = "That folder is unavailable.";
+    }
+
+    struct Entry { std::filesystem::path path; bool directory; std::string modified, size; };
     std::vector<Entry> entries;
     std::error_code error;
     std::filesystem::directory_iterator it(directory_, error), end;
     while (!error && it != end) {
         std::error_code ec;
         const bool isDirectory = it->is_directory(ec);
-        if (!ec && (isDirectory || it->path().extension() == ".toml")) entries.push_back({it->path(), isDirectory});
+        const bool hidden = it->path().filename().string().starts_with('.');
+        if (!ec && !hidden && (isDirectory || it->path().extension() == ".toml")) {
+            Entry entry{it->path(), isDirectory, {}, {}};
+            std::error_code timeError, sizeError;
+            const auto time = it->last_write_time(timeError);
+            if (!timeError) entry.modified = fileTime(time);
+            if (!isDirectory) { const auto bytes = it->file_size(sizeError); if (!sizeError) entry.size = fileSize(bytes); }
+            entries.push_back(std::move(entry));
+        }
         it.increment(error);
     }
-    if (error) ImGui::TextWrapped("Cannot list folder: %s", error.message().c_str());
     std::sort(entries.begin(), entries.end(), [](const auto& a, const auto& b) {
         return a.directory != b.directory ? a.directory > b.directory : a.path.filename() < b.path.filename();
     });
-    for (std::size_t i=0; i<entries.size(); ++i) {
-        const auto& entry = entries[i];
-        const auto name = (entry.directory ? "[Folder] " : "") + entry.path.filename().string();
-        ImGui::PushID(static_cast<int>(i));
-        if (ImGui::Selectable(name.c_str())) {
-            if (entry.directory) directory_ = entry.path;
-            else std::snprintf(path_.data(), path_.size(), "%s", entry.path.c_str());
+
+    const std::filesystem::path chosen = save ? directory_ / fileName_.data() : std::filesystem::path(path_.data());
+    ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(8, 4));
+    ImGui::BeginChild("Files", ImVec2(0, 250), ImGuiChildFlags_Borders);
+    if (ImGui::BeginTable("files", 3, ImGuiTableFlags_ScrollY | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingFixedFit)) {
+        ImGui::TableSetupScrollFreeze(0, 1);
+        ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn("Modified", ImGuiTableColumnFlags_WidthFixed, 130.f);
+        ImGui::TableSetupColumn("Size", ImGuiTableColumnFlags_WidthFixed, 70.f);
+        ImGui::TableHeadersRow();
+        const float iconWidth = ImGui::GetTextLineHeight() * 1.05f + 8.f;
+        for (std::size_t i=0; i<entries.size(); ++i) {
+            const auto& entry = entries[i];
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::PushID(static_cast<int>(i));
+            const ImVec2 iconPos = ImGui::GetCursorScreenPos();
+            ImGui::Indent(entry.directory ? iconWidth : 0.f);
+            const auto name = entry.path.filename().string();
+            const bool picked = !entry.directory && chosen == entry.path;
+            const bool activated = ImGui::Selectable(name.c_str(), picked,
+                ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowDoubleClick);
+            ImGui::Unindent(entry.directory ? iconWidth : 0.f);
+            if (entry.directory) drawFolderIcon(ImGui::GetWindowDrawList(), iconPos, ImGui::GetTextLineHeight());
+            ImGui::TableNextColumn();
+            ImGui::TextDisabled("%s", entry.modified.c_str());
+            ImGui::TableNextColumn();
+            ImGui::TextDisabled("%s", entry.size.c_str());
+            ImGui::PopID();
+            if (!activated) continue;
+            const bool doubleClick = ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
+            if (entry.directory) { if (doubleClick) goTo(entry.path); continue; }
             dialogError_.clear();
+            std::snprintf(path_.data(), path_.size(), "%s", entry.path.c_str());
+            std::snprintf(fileName_.data(), fileName_.size(), "%s", name.c_str());
+            if (doubleClick && !save) {
+                // Same path as the Import button below.
+                importPath_ = entry.path;
+            }
         }
-        ImGui::PopID();
+        if (entries.empty()) {
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextDisabled(error ? "Cannot list folder: %s" : "No folders or .toml files here", error.message().c_str());
+        }
+        ImGui::EndTable();
     }
     ImGui::EndChild();
-    ImGui::SetNextItemWidth(-1);
-    ImGui::InputText("##path", path_.data(), path_.size());
-    if (ImGui::Button(save ? "Export" : "Import", ImVec2(110,0))) {
-        try {
-            auto target = std::filesystem::path(path_.data());
-            if (target.empty()) throw std::runtime_error("Choose a file.");
-            if (save) {
-                if (target.extension().empty()) target += ".toml";
-                std::snprintf(path_.data(), path_.size(), "%s", target.c_str());
-                std::error_code ec;
-                if (std::filesystem::exists(std::filesystem::symlink_status(target, ec))) dialog_ = Dialog::Overwrite;
-                else saveFile(false);
-            } else {
-                auto profile = hhkbs::keymap::readProfile(target);
-                keymap_ = std::move(profile);
-                savedBytes_ = keymap_.toBytes();
-                loaded_ = true;
-                selectedProfile_.reset();  // a file belongs to no keyboard profile until the user picks one
-                summary_ = "Imported " + target.filename().string();
-                status_ = "Imported profile";
-                message_.clear();
-                directory_ = target.parent_path();
-                finishDialog();
-            }
-        } catch (const std::exception& error) { dialogError_ = error.what(); }
+    ImGui::PopStyleVar();
+
+    if (save) {
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted("File name");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(-1);
+        ImGui::InputText("##name", fileName_.data(), fileName_.size());
     }
+    dialog::error(dialogError_);
+    const bool ready = save ? fileName_[0] != '\0' : (path_[0] != '\0' || !importPath_.empty());
+    const int hit = dialog::footer({{"Cancel"}, {save ? "Export" : "Import", true, false, ready}});
+    if (hit == 0) { cancelDialog(); return; }
+    const bool pressed = hit == 1;
+    if (!pressed && importPath_.empty()) return;
+    try {
+        if (save) {
+            auto target = directory_ / fileName_.data();
+            if (target.extension().empty()) target += ".toml";
+            std::snprintf(path_.data(), path_.size(), "%s", target.c_str());
+            std::error_code ec;
+            if (std::filesystem::exists(std::filesystem::symlink_status(target, ec))) dialog_ = Dialog::Overwrite;
+            else saveFile(false);
+        } else {
+            const auto target = importPath_.empty() ? std::filesystem::path(path_.data()) : importPath_;
+            importPath_.clear();
+            auto profile = hhkbs::keymap::readProfile(target);
+            keymap_ = std::move(profile);
+            savedBytes_ = keymap_.toBytes();
+            loaded_ = true;
+            selectedProfile_.reset();  // a file belongs to no keyboard profile until the user picks one
+            summary_ = "Imported " + target.filename().string();
+            status_ = "Imported profile";
+            message_.clear();
+            directory_ = target.parent_path();
+            finishDialog();
+        }
+    } catch (const std::exception& error) { importPath_.clear(); dialogError_ = error.what(); }
 }
 
 void MainWindow::drawDialog()
@@ -481,35 +603,40 @@ void MainWindow::drawDialog()
     ImGui::SetNextWindowPos(viewport->GetCenter(), ImGuiCond_Appearing, ImVec2(.5f,.5f));
     ImGui::SetNextWindowSize(ImVec2(620,0), ImGuiCond_Always);
     if (!ImGui::BeginPopupModal("HHKBS", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
-    const bool ownCancel = dialog_ == Dialog::Backups;  // the backups tabs draw Cancel beside their own buttons
+    // Every dialog draws its own title, error line and footer through dialog::.
     if (dialog_ == Dialog::Assign) {
-        if (const auto code = assignment_.draw()) { keymap_.setScanCode(layer_, slot_, *code); finishDialog(); }
+        bool cancelled = false;
+        if (const auto code = assignment_.draw(cancelled)) { keymap_.setScanCode(layer_, slot_, *code); finishDialog(); }
+        else if (cancelled) cancelDialog();
     } else if (dialog_ == Dialog::Unsaved) {
-        ImGui::TextUnformatted("Unsaved keymap changes");
+        dialog::title("Unsaved keymap changes");
         ImGui::TextWrapped("Export the modified profile before continuing?");
-        if (ImGui::Button("Export first")) openFiles(true);
-        ImGui::SameLine();
-        if (ImGui::Button("Discard and continue")) {
+        dialog::error(dialogError_);
+        const int hit = dialog::footer({{"Cancel"}, {"Discard and continue"}, {"Export first", true}});
+        if (hit == 0) cancelDialog();
+        else if (hit == 1) {
             const auto action = std::exchange(pending_, Action::None);
             finishDialog();
             perform(action);
-        }
+        } else if (hit == 2) openFiles(true);
     } else if (dialog_ == Dialog::Import || dialog_ == Dialog::Export) drawFiles();
     else if (dialog_ == Dialog::Backups) drawBackups();
     else if (dialog_ == Dialog::DeleteBackup) drawDeleteBackup();
     else if (dialog_ == Dialog::CleanBackups) drawCleanBackups();
     else if (dialog_ == Dialog::Overwrite) {
-        ImGui::TextWrapped("Replace the existing file?\n%s", path_.data());
-        if (ImGui::Button("Replace file")) saveFile(true);
-        ImGui::SameLine();
-        if (ImGui::Button("Back")) dialog_ = Dialog::Export;
+        dialog::title("Replace existing file?");
+        ImGui::TextWrapped("%s", path_.data());
+        dialog::error(dialogError_);
+        const int hit = dialog::footer({{"Back"}, {"Replace file", false, true}});
+        if (hit == 0) dialog_ = Dialog::Export;
+        else if (hit == 1) saveFile(true);
     } else if (dialog_ == Dialog::Apply) {
-        ImGui::TextUnformatted("Apply to keyboard");
-        ImGui::TextUnformatted("Profile to overwrite");
+        dialog::title("Apply to keyboard");
+        dialog::hint("Profile to overwrite");
         for (std::uint16_t i=0; i<4; ++i) {
             if (i) ImGui::SameLine();
             const bool chosen = applyTarget_ && *applyTarget_ == i;
-            if (chosen) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(.69f,.80f,.97f,1));
+            if (chosen) ImGui::PushStyleColor(ImGuiCol_Button, theme::palette().selected);
             const auto label = "Profile " + std::to_string(i+1);
             if (ImGui::Button(label.c_str(), ImVec2(96,32))) applyTarget_ = i;
             if (chosen) ImGui::PopStyleColor();
@@ -519,11 +646,13 @@ void MainWindow::drawDialog()
             ImGui::TextWrapped("The keyboard's current %s is saved as a backup first, and the result is read back to verify it. "
                                "The keyboard returns to the profile it was on afterwards. "
                                "Do not unplug the keyboard while writing.", target.c_str());
-        } else ImGui::TextDisabled("Choose the profile to overwrite.");
-        ImGui::BeginDisabled(!applyTarget_);
-        if (ImGui::Button("Apply")) { finishDialog(); beginApply(); }
-        ImGui::EndDisabled();
+        } else dialog::hint("Choose the profile to overwrite.");
+        dialog::error(dialogError_);
+        const int hit = dialog::footer({{"Cancel"}, {"Apply", true, false, applyTarget_.has_value()}});
+        if (hit == 0) cancelDialog();
+        else if (hit == 1) { finishDialog(); beginApply(); }
     } else if (dialog_ == Dialog::Defaults) {
+        dialog::title("Restore defaults");
         ImGui::TextWrapped("Restore the US Profile 1 defaults in the editor? "
                            "Restoring alone does not change the keyboard; use \"Restore and apply\" to write them right away.");
         const auto restore = [this] {
@@ -532,19 +661,60 @@ void MainWindow::drawDialog()
                 for (std::size_t slot=0; slot<Keymap::keysPerLayer; ++slot)
                     keymap_.setScanCode(layer, slot, defaults.scanCode(layer,slot));
         };
-        if (ImGui::Button("Restore defaults")) { restore(); finishDialog(); }
-        ImGui::SameLine();
-        ImGui::BeginDisabled(demo_);
-        if (ImGui::Button("Restore and apply")) { restore(); finishDialog(); openApply(); }
-        ImGui::EndDisabled();
-    }
-    if (!dialogError_.empty()) ImGui::TextWrapped("%s", dialogError_.c_str());
-    if (!ownCancel) {
-        ImGui::SameLine();
-        if (ImGui::Button("Cancel")) cancelDialog();
+        dialog::error(dialogError_);
+        const int hit = dialog::footer({{"Cancel"}, {"Restore and apply", false, false, !demo_}, {"Restore defaults", true}});
+        if (hit == 0) cancelDialog();
+        else if (hit == 1) { restore(); finishDialog(); openApply(); }
+        else if (hit == 2) { restore(); finishDialog(); }
     }
     if (ImGui::IsKeyPressed(ImGuiKey_Escape)) cancelDialog();
     ImGui::EndPopup();
+}
+
+namespace {
+constexpr float kPi = 3.14159265f;
+
+// A circular arrow: a three-quarter arc with a head at its end.
+void drawRefreshIcon(ImDrawList* draw, ImVec2 min, ImVec2 max, ImU32 color)
+{
+    const ImVec2 center((min.x + max.x) / 2, (min.y + max.y) / 2);
+    const float r = (max.x - min.x) * .19f;
+    const float start = -kPi * .35f, end = kPi * 1.35f;
+    draw->PathArcTo(center, r, start, end);
+    draw->PathStroke(color, 0, 1.6f);
+    const ImVec2 tip(center.x + std::cos(end) * r, center.y + std::sin(end) * r);
+    const ImVec2 along(-std::sin(end), std::cos(end)), across(std::cos(end), std::sin(end));
+    const float head = r * .7f;
+    draw->AddTriangleFilled(ImVec2(tip.x + along.x * head, tip.y + along.y * head),
+                            ImVec2(tip.x + across.x * head * .8f, tip.y + across.y * head * .8f),
+                            ImVec2(tip.x - across.x * head * .8f, tip.y - across.y * head * .8f), color);
+}
+
+// Auto = half-filled disc, Light = sun, Dark = crescent moon.
+void drawThemeIcon(ImDrawList* draw, ImVec2 min, ImVec2 max, theme::Mode mode)
+{
+    const ImVec2 center((min.x + max.x) / 2, (min.y + max.y) / 2);
+    const float r = (max.x - min.x) * .2f;
+    const ImU32 color = ImGui::GetColorU32(ImGuiCol_Text);
+    if (mode == theme::Mode::Auto) {
+        draw->AddCircle(center, r, color, 0, 1.6f);
+        draw->PathArcTo(center, r, -kPi / 2, kPi / 2);
+        draw->PathFillConvex(color);
+    } else if (mode == theme::Mode::Light) {
+        draw->AddCircleFilled(center, r * .7f, color);
+        for (int i = 0; i < 8; ++i) {
+            const float a = i * kPi / 4;
+            const ImVec2 dir(std::cos(a), std::sin(a));
+            draw->AddLine(ImVec2(center.x + dir.x * r * 1.15f, center.y + dir.y * r * 1.15f),
+                          ImVec2(center.x + dir.x * r * 1.6f, center.y + dir.y * r * 1.6f), color, 1.6f);
+        }
+    } else {
+        draw->AddCircleFilled(center, r * 1.1f, color);
+        draw->AddCircleFilled(ImVec2(center.x + r * .6f, center.y - r * .5f), r * .95f,
+                              ImGui::GetColorU32(ImGui::IsItemActive() ? ImGuiCol_ButtonActive :
+                                                 ImGui::IsItemHovered() ? ImGuiCol_ButtonHovered : ImGuiCol_Button));
+    }
+}
 }
 
 void MainWindow::draw()
@@ -569,6 +739,13 @@ void MainWindow::draw()
     ImGui::SameLine();
     ImGui::SetCursorPosY(smallTop);
     ImGui::Text("  /  %s", status_.c_str());
+    // Cycles Auto (follow the desktop) -> Light -> Dark; the icon shows the current mode.
+    const float themeSize = ImGui::GetFrameHeight();
+    ImGui::SameLine(ImGui::GetWindowWidth() - ImGui::GetStyle().WindowPadding.x - themeSize);
+    ImGui::SetCursorPosY(titleTop);
+    if (ImGui::Button("##theme", ImVec2(themeSize, themeSize))) theme::setMode(theme::nextMode(theme::mode()));
+    drawThemeIcon(ImGui::GetWindowDrawList(), ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), theme::mode());
+    ImGui::SetItemTooltip("Theme: %s (click to change)", theme::modeName(theme::mode()));
     ImGui::Spacing();
     ImGui::Separator();
     ImGui::Spacing();
@@ -579,14 +756,15 @@ void MainWindow::draw()
     for (std::size_t i=0; i<4; ++i) {
         ImGui::SameLine();
         const bool selected = i == layer_;
-        if (selected) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(.69f,.80f,.97f,1));
+        if (selected) ImGui::PushStyleColor(ImGuiCol_Button, theme::palette().selected);
         if (ImGui::Button(layers[i], ImVec2(76,32))) layer_ = i;
         if (selected) ImGui::PopStyleColor();
     }
     ImGui::EndDisabled();
     // Profiles are right-aligned; wrap below the layers when the window is too narrow.
     const float spacing = ImGui::GetStyle().ItemSpacing.x;
-    const float profilesWidth = ImGui::CalcTextSize("Keyboard profile").x + 4*(96 + spacing);
+    const float refreshWidth = 32.f;
+    const float profilesWidth = refreshWidth + spacing + ImGui::CalcTextSize("Keyboard profile").x + 4*(96 + spacing);
     const float profilesX = ImGui::GetWindowWidth() - ImGui::GetStyle().WindowPadding.x - profilesWidth;
     const float layersEnd = ImGui::GetItemRectMax().x - ImGui::GetWindowPos().x;
     const bool sideBySide = profilesX >= layersEnd + 36.f;
@@ -598,36 +776,37 @@ void MainWindow::draw()
     for (std::uint16_t i=0; i<4; ++i) {
         ImGui::SameLine();
         const bool selected = selectedProfile_ && *selectedProfile_ == i;
-        if (selected) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(.69f,.80f,.97f,1));
+        if (selected) ImGui::PushStyleColor(ImGuiCol_Button, theme::palette().selected);
         const auto label = "Profile " + std::to_string(i+1);
         if (ImGui::Button(label.c_str(), ImVec2(96,32))) selectProfile(i);
         if (selected) ImGui::PopStyleColor();
     }
+    // Re-reads the profile the keyboard is using; it replaces the editor content, so unsaved edits are confirmed first.
+    ImGui::SameLine();
+    if (ImGui::Button("##refresh", ImVec2(refreshWidth, 32))) request(Action::Read);
+    drawRefreshIcon(ImGui::GetWindowDrawList(), ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), ImGui::GetColorU32(ImGuiCol_Text));
+    ImGui::SetItemTooltip("Read the profile the keyboard is currently using");
     ImGui::EndDisabled();
     const std::string caption = summary_ + (unsaved() ? (summary_.empty() ? "Unsaved changes" : "  /  Unsaved changes") : "");
     const auto& style = ImGui::GetStyle();
-    // Reserve exactly what is drawn under the keyboard: the button row plus the demo note and message when present.
-    float below = style.ItemSpacing.y + ImGui::GetFrameHeight();
-    if (demo_) below += style.ItemSpacing.y + ImGui::GetTextLineHeight();
-    if (!message_.empty())
-        below += style.ItemSpacing.y + ImGui::CalcTextSize(message_.c_str(), nullptr, false, ImGui::GetContentRegionAvail().x).y;
+    // Reserve exactly what is drawn under the keyboard: the button row. Messages live inside the keyboard frame.
+    const float below = style.ItemSpacing.y + ImGui::GetFrameHeight();
     const float boardHeight = std::max(320.f, ImGui::GetContentRegionAvail().y - below - 2.f);
     ImGui::BeginDisabled(busy);
     if (loaded_) {
-        if (const auto slot = drawKeyboard(keymap_, layer_, boardHeight, caption)) {
+        if (const auto slot = drawKeyboard(keymap_, layer_, boardHeight, caption,
+                                       message_.empty() && demo_ ? "Demo mode: nothing is written." : message_, message_.empty())) {
             slot_ = *slot;
-            assignment_.reset(keymap_.scanCode(layer_,slot_));
+            assignment_.reset(keymap_.scanCode(layer_,slot_), keyName(slot_) + " (" + layerNames[layer_] + ")");
             dialog_ = Dialog::Assign;
         }
     } else {
         ImGui::BeginChild("No profile", ImVec2(0,boardHeight), ImGuiChildFlags_Borders);
         ImGui::TextWrapped("%s", busy ? "Looking for an HHKB Studio..." : "Connect a keyboard or import a profile to begin.");
+        if (!message_.empty()) ImGui::TextWrapped("%s", message_.c_str());
         ImGui::EndChild();
     }
     // Left: moving data in and out. Right: the editor and the one action that writes to the keyboard.
-    if (ImGui::Button("Read from keyboard")) request(Action::Read);
-    ImGui::SetItemTooltip("Read the profile the keyboard is currently using");
-    ImGui::SameLine();
     if (ImGui::Button("Import")) request(Action::Import);
     ImGui::SameLine();
     ImGui::BeginDisabled(!loaded_);
@@ -651,16 +830,14 @@ void MainWindow::draw()
     ImGui::EndDisabled();
     ImGui::EndDisabled();
     ImGui::SameLine();
-    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(.25f,.52f,.96f,1));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(.20f,.46f,.90f,1));
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(.16f,.40f,.84f,1));
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1,1,1,1));
+    ImGui::PushStyleColor(ImGuiCol_Button, theme::palette().accent);
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, theme::palette().accentHovered);
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, theme::palette().accentActive);
+    ImGui::PushStyleColor(ImGuiCol_Text, theme::palette().accentText);
     ImGui::BeginDisabled(!loaded_ || demo_ || busy);
     if (ImGui::Button("Apply to keyboard")) openApply();
     ImGui::EndDisabled();
     ImGui::PopStyleColor(4);
-    if (demo_) ImGui::TextDisabled("Demo mode never writes to a keyboard.");
-    if (!message_.empty()) ImGui::TextWrapped("%s", message_.c_str());
     drawDialog();
     ImGui::End();
 }

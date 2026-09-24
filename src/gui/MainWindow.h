@@ -83,6 +83,10 @@ private:
     Dialog dialog_ = Dialog::None;
     Action pending_ = Action::None;
     KeyAssignmentDialog assignment_;
-    std::array<char, 4096> path_{};
+    std::array<char, 4096> path_{};      // the file an Import will read or an Export will write
+    std::array<char, 4096> dirInput_{};  // the editable folder bar; follows directory_ until edited
+    std::array<char, 256> fileName_{};   // Export's file name inside directory_
+    std::filesystem::path shownDir_;
+    std::filesystem::path importPath_;  // set by a double-click to import without pressing the button
     std::filesystem::path directory_;
 };
