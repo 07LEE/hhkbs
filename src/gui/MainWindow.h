@@ -1,4 +1,5 @@
 #pragma once
+#include "device/PadMonitor.h"
 #include "gui/KeyAssignmentDialog.h"
 #include "keymap/BackupFiles.h"
 #include "keymap/Keymap.h"
@@ -23,6 +24,14 @@ private:
         std::string detail;
         std::vector<std::uint8_t> bytes;
         std::optional<std::uint16_t> profile;
+        std::filesystem::path path;  // the configuration interface that answered
+        std::array<std::optional<bool>, 4> pads;  // gesture pad states read from the keyboard
+    };
+    struct PadResult {
+        bool ok = false;
+        std::size_t pad = 0;
+        bool on = true;
+        std::string message;
     };
     struct ApplyResult {
         bool ok = false;
@@ -33,9 +42,11 @@ private:
     void beginScan(std::optional<std::uint16_t> profile = std::nullopt);
     void selectProfile(std::uint16_t profile);
     void pollScan();
+    void beginPadChange(std::size_t pad, bool on);
+    void pollPadChange();
     void beginApply();
     void pollApply();
-    [[nodiscard]] bool busy() const { return scan_.valid() || apply_.valid(); }
+    [[nodiscard]] bool busy() const { return scan_.valid() || apply_.valid() || pad_.valid(); }
     void request(Action action);
     void perform(Action action);
     void openFiles(bool save);
@@ -66,6 +77,7 @@ private:
     int keepBackups_ = 5;
     std::future<ScanResult> scan_;
     std::future<ApplyResult> apply_;
+    std::future<PadResult> pad_;
     // The keyboard profile shown in the editor; only set once it has been read or applied.
     std::optional<std::uint16_t> selectedProfile_;
     std::optional<std::uint16_t> requestedProfile_;
@@ -78,6 +90,7 @@ private:
     std::string dialogError_;
     bool loaded_ = false;
     bool close_ = false;
+    hhkbs::device::PadMonitor pads_;  // gesture pad on/off as the keyboard reports it
     std::size_t layer_ = 0;
     std::size_t slot_ = 0;
     Dialog dialog_ = Dialog::None;

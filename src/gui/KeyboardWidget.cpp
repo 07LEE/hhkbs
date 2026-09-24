@@ -32,10 +32,24 @@ std::vector<std::string> wrapWords(ImFont* font, float fontSize, const std::stri
     if (!line.empty()) lines.push_back(line);
     return lines;
 }
+
+// Which gesture pad a slot belongs to: left side, front left, front right, right side.
+int padOf(std::size_t slot)
+{
+    switch (slot) {
+    case 86: case 87: return 0;
+    case 101: case 102: return 1;
+    case 108: case 109: return 2;
+    case 116: case 117: return 3;
+    default: return -1;
+    }
+}
 }
 
 std::optional<std::size_t> drawKeyboard(const hhkbs::keymap::Keymap& keymap,
                                       std::size_t layer, float height,
+                                      const std::array<std::optional<bool>, 4>& padsOn,
+                                      std::optional<std::size_t>& padToggled,
                                       const std::string& caption,
                                       const std::string& notice, bool noticeMuted)
 {
@@ -55,6 +69,8 @@ std::optional<std::size_t> drawKeyboard(const hhkbs::keymap::Keymap& keymap,
     const ImVec2 origin(start.x + (available.x - unit * 17.8f) / 2,
                         start.y + captionHeight + (available.y - unit * 6.1f) / 2);
     const auto key = [&](const hhkbs::keymap::KeyPosition& pos, bool gesture) {
+        const int pad = gesture ? padOf(pos.slot) : -1;
+        const bool padOff = pad >= 0 && padsOn[pad] == false;
         const ImVec2 top(origin.x + pos.x * unit + 3, origin.y + pos.y * unit + 3);
         const ImVec2 size(pos.width * unit - 6, unit * .82f - 3);
         const ImVec2 bottom(top.x + size.x, top.y + size.y);
@@ -100,6 +116,7 @@ std::optional<std::size_t> drawKeyboard(const hhkbs::keymap::Keymap& keymap,
             draw->AddText(font, fontSize, ImVec2(top.x + (size.x - extent.x) / 2, y), pal.keyLabel, line.c_str());
             y += lineHeight;
         }
+        if (padOff) draw->AddRectFilled(top, bottom, ImGui::GetColorU32(ImGuiCol_WindowBg, .55f), 6);
         draw->PopClipRect();
         if (changed) draw->AddCircleFilled(ImVec2(bottom.x-6, top.y+6), 2.5f, border);
         if (hovered) {
@@ -113,6 +130,35 @@ std::optional<std::size_t> drawKeyboard(const hhkbs::keymap::Keymap& keymap,
     };
     for (const auto& pos : hhkbs::keymap::KeyboardLayout::usStudio()) key(pos, false);
     for (const auto& pos : hhkbs::keymap::KeyboardLayout::gesturePads()) key(pos, true);
+    // An On/Off button by each pad: below a side pad, outside a front pad.
+    struct PadTag { float x, y, width; };
+    const std::array<PadTag, 4> tags{{{0.f, 3.3f, 1.15f}, {2.4f, 5.25f, 1.1f}, {14.25f, 5.25f, 1.1f}, {16.65f, 3.3f, 1.15f}}};
+    const char* padNames[] = {"Left side", "Front left", "Front right", "Right side"};
+    for (std::size_t pad = 0; pad < tags.size(); ++pad) {
+        const auto& tag = tags[pad];
+        const bool known = padsOn[pad].has_value();
+        const bool on = padsOn[pad].value_or(true);
+        const ImVec2 top(origin.x + tag.x * unit + 3, origin.y + tag.y * unit + 3);
+        const ImVec2 size(tag.width * unit - 6, unit * .82f - 3);
+        const ImVec2 bottom(top.x + size.x, top.y + size.y);
+        ImGui::SetCursorScreenPos(top);
+        ImGui::PushID(static_cast<int>(pad) + 1000);
+        ImGui::InvisibleButton("pad", size);
+        if (known && ImGui::IsItemClicked()) padToggled = pad;
+        const bool hovered = known && ImGui::IsItemHovered();
+        ImGui::PopID();
+        const auto& pal = theme::palette();
+        draw->AddRectFilled(top, bottom, hovered ? pal.keyHover : pal.keyFill, 6);
+        draw->AddRect(top, bottom, on ? pal.keyBorderGesture : pal.keyBorder, 6);
+        const char* text = on ? "On" : "Off";
+        const auto extent = ImGui::CalcTextSize(text);
+        draw->AddText(ImVec2(top.x + (size.x - extent.x) / 2, top.y + (size.y - extent.y) / 2),
+                      on ? pal.keyLabel : ImGui::GetColorU32(ImGuiCol_TextDisabled), text);
+        if (ImGui::IsMouseHoveringRect(top, bottom) && ImGui::IsWindowHovered()) {
+            if (known) ImGui::SetTooltip("%s pad: %s (click to turn %s)", padNames[pad], on ? "on" : "off", on ? "off" : "on");
+            else ImGui::SetTooltip("%s pad: connect a keyboard to change it", padNames[pad]);
+        }
+    }
     if (!notice.empty()) {
         const float wrap = std::min(205.f, available.x * .22f);
         const auto extent = ImGui::CalcTextSize(notice.c_str(), nullptr, false, wrap);
