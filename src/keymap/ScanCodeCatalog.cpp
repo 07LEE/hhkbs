@@ -226,6 +226,15 @@ std::string ScanCodeCatalog::compactLabelFor(const Keymap::ScanCode code)
         return ".";
     case 0x0038:
         return "/";
+    // "Sensitivity" alone is too wide for a one-unit key, so the caps abbreviate it.
+    case 0x5F9E:
+        return "Gesture Sens. Low";
+    case 0x5F9F:
+        return "Gesture Sens. Medium";
+    case 0x5FA0:
+        return "Gesture Sens. High";
+    case 0x5FA1:
+        return "Gesture Sens. Highest";
     default:
         return labelFor(code);
     }
