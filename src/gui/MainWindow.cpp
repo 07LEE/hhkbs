@@ -552,7 +552,13 @@ void MainWindow::draw()
     }
     ImGui::EndDisabled();
     const std::string caption = summary_ + (unsaved() ? (summary_.empty() ? "Unsaved changes" : "  /  Unsaved changes") : "");
-    const float boardHeight = std::max(320.f, ImGui::GetContentRegionAvail().y-115.f);
+    const auto& style = ImGui::GetStyle();
+    // Reserve exactly what is drawn under the keyboard: the button row plus the demo note and message when present.
+    float below = style.ItemSpacing.y + ImGui::GetFrameHeight();
+    if (demo_) below += style.ItemSpacing.y + ImGui::GetTextLineHeight();
+    if (!message_.empty())
+        below += style.ItemSpacing.y + ImGui::CalcTextSize(message_.c_str(), nullptr, false, ImGui::GetContentRegionAvail().x).y;
+    const float boardHeight = std::max(320.f, ImGui::GetContentRegionAvail().y - below - 2.f);
     ImGui::BeginDisabled(busy);
     if (loaded_) {
         if (const auto slot = drawKeyboard(keymap_, layer_, boardHeight, caption)) {
@@ -565,16 +571,24 @@ void MainWindow::draw()
         ImGui::TextWrapped("%s", busy ? "Looking for an HHKB Studio..." : "Connect a keyboard or import a profile to begin.");
         ImGui::EndChild();
     }
+    // Left: moving data in and out. Right: the editor and the one action that writes to the keyboard.
     if (ImGui::Button("Read from keyboard")) request(Action::Read);
     ImGui::SetItemTooltip("Read the profile the keyboard is currently using");
     ImGui::SameLine();
     if (ImGui::Button("Import")) request(Action::Import);
     ImGui::SameLine();
-    if (ImGui::Button("Backups...")) openBackups();
-    ImGui::SameLine();
     ImGui::BeginDisabled(!loaded_);
     if (ImGui::Button("Export")) openFiles(true);
+    ImGui::EndDisabled();
     ImGui::SameLine();
+    if (ImGui::Button("Backups...")) openBackups();
+
+    const auto buttonWidth = [&](const char* label) { return ImGui::CalcTextSize(label).x + style.FramePadding.x * 2; };
+    const float rightWidth = buttonWidth("Restore defaults") + buttonWidth("Discard changes") + buttonWidth("Apply to keyboard") + 2 * style.ItemSpacing.x;
+    const float rightX = ImGui::GetWindowWidth() - style.WindowPadding.x - rightWidth;
+    if (rightX >= ImGui::GetItemRectMax().x - ImGui::GetWindowPos().x + 36.f) ImGui::SameLine(rightX);
+    else ImGui::SameLine();
+    ImGui::BeginDisabled(!loaded_);
     if (ImGui::Button("Restore defaults")) dialog_ = Dialog::Defaults;
     ImGui::SameLine();
     ImGui::BeginDisabled(!keymap_.isModified());
@@ -583,9 +597,14 @@ void MainWindow::draw()
     ImGui::EndDisabled();
     ImGui::EndDisabled();
     ImGui::SameLine();
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(.25f,.52f,.96f,1));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(.20f,.46f,.90f,1));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(.16f,.40f,.84f,1));
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1,1,1,1));
     ImGui::BeginDisabled(!loaded_ || demo_ || busy);
     if (ImGui::Button("Apply to keyboard")) openApply();
     ImGui::EndDisabled();
+    ImGui::PopStyleColor(4);
     if (demo_) ImGui::TextDisabled("Demo mode never writes to a keyboard.");
     if (!message_.empty()) ImGui::TextWrapped("%s", message_.c_str());
     drawDialog();
