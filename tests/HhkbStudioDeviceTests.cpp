@@ -108,6 +108,35 @@ public:
         }
     }
 
+    using Transport::exchange;
+
+    // Mirrors the keyboard: a profile switch is answered by two reports.
+    [[nodiscard]] std::vector<Report> exchange(
+        const Report& request,
+        const std::size_t responseCount) override
+    {
+        if (request[0] != 0x03) {
+            return Transport::exchange(request, responseCount);
+        }
+        ++switches;
+        const std::uint8_t requested = request[4];
+        if (!ignoreSwitch) {
+            currentProfile = requested;
+        }
+        Report notification{};
+        notification[0] = 0x02;
+        notification[1] = 0x11;
+        notification[2] = 0x01;
+        notification[4] = ignoreSwitch ? currentProfile : requested;
+        notification[7] = 0x20;
+        Report acknowledgement = notification;
+        acknowledgement[0] = 0x03;
+        acknowledgement[7] = 0;
+        std::vector<Report> responses{notification, acknowledgement};
+        responses.resize(switchResponseCount, acknowledgement);
+        return responses;
+    }
+
     [[nodiscard]] Report exchange(const Report& request) override
     {
         Report response{};
@@ -142,6 +171,9 @@ public:
     std::string productName = "HHKB-Studio";
     std::uint8_t currentProfile = 2;
     std::size_t writes = 0;
+    std::size_t switches = 0;
+    std::size_t switchResponseCount = 2;
+    bool ignoreSwitch = false;
     std::size_t failWriteNumber = 0;
     bool corruptWrites = false;
 };
@@ -238,6 +270,68 @@ void writeTargetIsChecked()
     }
     require(threw, "a short profile was accepted");
     require(shortProfile.writes == 0, "a rejected profile was still sent");
+}
+
+void profileSwitchIsConfirmed()
+{
+    StorageTransport transport;
+    HhkbStudioDevice device(transport);
+
+    device.switchProfile(3);
+
+    require(transport.switches == 1, "profile switch was not sent once");
+    require(transport.currentProfile == 3, "profile switch did not take effect");
+    device.requireTarget(3);
+}
+
+void invalidProfileSwitchIsRejectedBeforeSending()
+{
+    StorageTransport transport;
+    HhkbStudioDevice device(transport);
+
+    bool threw = false;
+    try {
+        device.switchProfile(4);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+
+    require(threw, "an out-of-range profile was accepted");
+    require(transport.switches == 0, "an invalid profile switch was still sent");
+}
+
+void unconfirmedProfileSwitchIsReported()
+{
+    StorageTransport ignored;
+    ignored.ignoreSwitch = true;
+    HhkbStudioDevice device(ignored);
+    bool threw = false;
+    try {
+        device.switchProfile(0);
+    } catch (const hhkbs::device::DeviceError& error) {
+        threw = error.code() == hhkbs::device::DeviceErrorCode::Protocol;
+    }
+    require(threw, "a switch the keyboard ignored was not reported");
+
+    StorageTransport shortAnswer;
+    shortAnswer.switchResponseCount = 1;
+    HhkbStudioDevice shortDevice(shortAnswer);
+    threw = false;
+    try {
+        shortDevice.switchProfile(0);
+    } catch (const hhkbs::device::DeviceError&) {
+        threw = true;
+    }
+    require(threw, "a missing switch response was not reported");
+}
+
+void profileSwitchPacketIsEncoded()
+{
+    const auto request = hhkbs::device::protocol::encodeProfileSwitchRequest(2);
+    require(
+        request[0] == 0x03 && request[1] == 0x11 && request[2] == 0x01
+            && request[3] == 0x00 && request[4] == 0x02 && request[5] == 0,
+        "profile switch request was encoded incorrectly");
 }
 
 void writePacketIsEncoded()
@@ -374,6 +468,10 @@ int main()
         failedWriteRestoresBackup();
         mismatchedReadBackRestoresBackup();
         writeTargetIsChecked();
+        profileSwitchPacketIsEncoded();
+        profileSwitchIsConfirmed();
+        invalidProfileSwitchIsRejectedBeforeSending();
+        unconfirmedProfileSwitchIsReported();
     } catch (const std::exception& error) {
         std::cerr << "HHKB device test failed: " << error.what() << '\n';
         return 1;

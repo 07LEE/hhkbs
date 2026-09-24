@@ -54,6 +54,19 @@ Report HidrawTransport::exchange(const Report& request)
     return readReport();
 }
 
+std::vector<Report> HidrawTransport::exchange(
+    const Report& request,
+    const std::size_t responseCount)
+{
+    writeReport(request);
+    std::vector<Report> responses;
+    responses.reserve(responseCount);
+    for (std::size_t index = 0; index < responseCount; ++index) {
+        responses.push_back(readReport());
+    }
+    return responses;
+}
+
 void HidrawTransport::waitFor(const short events) const
 {
     pollfd descriptor{

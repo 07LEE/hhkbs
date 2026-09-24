@@ -23,11 +23,14 @@ enum class Property : std::uint16_t {
 inline constexpr std::size_t textPayloadOffset = 3;
 inline constexpr std::size_t dataPayloadOffset = 4;
 inline constexpr std::uint8_t maximumDataPayload = 26;
+inline constexpr std::uint16_t profileCount = 4;
+inline constexpr std::size_t profileSwitchResponseCount = 2;
 
 [[nodiscard]] Report encodePropertyRequest(Property property);
 [[nodiscard]] Report encodeDataReadRequest(
     std::uint16_t address,
     std::uint8_t length);
+[[nodiscard]] Report encodeProfileSwitchRequest(std::uint16_t profile);
 [[nodiscard]] Report encodeDataWriteRequest(
     std::uint16_t address,
     const std::vector<std::uint8_t>& data);

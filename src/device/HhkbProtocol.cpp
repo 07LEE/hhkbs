@@ -44,6 +44,22 @@ Report encodeDataReadRequest(
     return report;
 }
 
+Report encodeProfileSwitchRequest(const std::uint16_t profile)
+{
+    if (profile >= profileCount) {
+        throw std::invalid_argument("HHKB profile number must be between 0 and 3");
+    }
+
+    const auto command = static_cast<std::uint16_t>(Property::CurrentProfile);
+    Report report{};
+    report[0] = 0x03;
+    report[1] = static_cast<std::uint8_t>(command >> 8U);
+    report[2] = static_cast<std::uint8_t>(command & 0xFFU);
+    report[3] = static_cast<std::uint8_t>(profile >> 8U);
+    report[4] = static_cast<std::uint8_t>(profile & 0xFFU);
+    return report;
+}
+
 Report encodeDataWriteRequest(
     const std::uint16_t address,
     const std::vector<std::uint8_t>& data)

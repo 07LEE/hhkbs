@@ -53,6 +53,34 @@ std::vector<std::uint8_t> HhkbStudioDevice::readCurrentProfile()
         static_cast<std::uint16_t>(keymap::Keymap::profileByteCount));
 }
 
+void HhkbStudioDevice::switchProfile(const std::uint16_t profile)
+{
+    const auto responses = transport_.exchange(
+        protocol::encodeProfileSwitchRequest(profile),
+        protocol::profileSwitchResponseCount);
+    if (responses.size() != protocol::profileSwitchResponseCount) {
+        throw DeviceError(
+            DeviceErrorCode::Protocol,
+            "HHKB Studio answered a profile switch with an unexpected number of reports");
+    }
+    for (const auto& response : responses) {
+        if (protocol::decodeBigEndian16(response, protocol::textPayloadOffset) != profile) {
+            throw DeviceError(
+                DeviceErrorCode::Protocol,
+                "HHKB Studio did not confirm the requested profile");
+        }
+    }
+
+    const auto active = protocol::decodeBigEndian16(
+        readProperty(protocol::Property::CurrentProfile),
+        protocol::textPayloadOffset);
+    if (active != profile) {
+        throw DeviceError(
+            DeviceErrorCode::Protocol,
+            "HHKB Studio is not on the requested profile after switching");
+    }
+}
+
 void HhkbStudioDevice::requireTarget(const std::uint16_t expectedProfile)
 {
     if (readProductName() != "HHKB-Studio") {

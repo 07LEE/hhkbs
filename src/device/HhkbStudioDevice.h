@@ -28,6 +28,10 @@ public:
     [[nodiscard]] KeyboardInformation readInformation();
     [[nodiscard]] std::vector<std::uint8_t> readCurrentProfile();
 
+    // Makes `profile` (0-3) the active profile, then confirms both answers and a
+    // fresh read of the active profile agree.
+    void switchProfile(std::uint16_t profile);
+
     // Throws unless this is an HHKB Studio whose current profile is expectedProfile.
     void requireTarget(std::uint16_t expectedProfile);
 
