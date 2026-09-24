@@ -244,7 +244,23 @@ void MainWindow::drawBackups()
     ImGui::BeginDisabled(demo_);
     if (ImGui::Button("Restore and apply") && loadBackup(backups_[*backupChoice_])) dialog_ = Dialog::Apply;
     ImGui::EndDisabled();
+    ImGui::SameLine();
+    if (ImGui::Button("Delete")) dialog_ = Dialog::DeleteBackup;
     ImGui::EndDisabled();
+}
+void MainWindow::drawDeleteBackup()
+{
+    const auto& entry = backups_[*backupChoice_];
+    ImGui::TextUnformatted("Delete backup");
+    ImGui::TextWrapped("Delete the backup of Profile %d saved on %s? This cannot be undone.", entry.profile + 1, entry.timestamp.c_str());
+    if (ImGui::Button("Delete backup")) {
+        try {
+            hhkbs::keymap::deleteBackup(hhkbs::keymap::backupDirectory(), entry);
+            openBackups();
+        } catch (const std::exception& error) { dialogError_ = error.what(); }
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Back")) dialog_ = Dialog::Backups;
 }
 void MainWindow::finishDialog()
 {
@@ -358,6 +374,7 @@ void MainWindow::drawDialog()
         }
     } else if (dialog_ == Dialog::Import || dialog_ == Dialog::Export) drawFiles();
     else if (dialog_ == Dialog::Backups) drawBackups();
+    else if (dialog_ == Dialog::DeleteBackup) drawDeleteBackup();
     else if (dialog_ == Dialog::Overwrite) {
         ImGui::TextWrapped("Replace the existing file?\n%s", path_.data());
         if (ImGui::Button("Replace file")) saveFile(true);

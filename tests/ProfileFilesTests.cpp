@@ -58,6 +58,20 @@ int main() {
             throw std::runtime_error("Backups were not listed newest first with their profile");
         if (listed[1].timestamp != "2026-09-24 09:48:06" || listed[2].timestamp != "2026-01-01 09:00:00")
             throw std::runtime_error("Backup timestamp was not formatted");
+        const auto refuses = [&](const BackupEntry& entry) {
+            try { deleteBackup(backups, entry); } catch (const std::exception&) { return true; }
+            return false;
+        };
+        if (!refuses({backups / "notes.toml", 0, {}})) throw std::runtime_error("A non-backup file was deleted");
+        if (!refuses({directory / "profile.toml", 0, {}})) throw std::runtime_error("A file outside the backups was deleted");
+        if (!refuses({backups / "backup-20991231-235959-profile1.toml", 0, {}}))
+            throw std::runtime_error("Deleting a missing backup should fail");
+        if (!std::filesystem::exists(backups / "notes.toml") || !std::filesystem::exists(directory / "profile.toml"))
+            throw std::runtime_error("A refused delete still removed a file");
+        deleteBackup(backups, listed[1]);
+        const auto remaining = listBackups(backups);
+        if (remaining.size() != 2 || std::filesystem::exists(listed[1].path))
+            throw std::runtime_error("The chosen backup was not deleted alone");
         if (!listBackups(directory / "missing").empty()) throw std::runtime_error("Missing folder should list nothing");
         if (backupFileName(0, 0).find("-profile1.toml") == std::string::npos)
             throw std::runtime_error("Backup file names use the 1-based profile number");

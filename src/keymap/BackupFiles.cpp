@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <optional>
+#include <stdexcept>
 #include <system_error>
 
 namespace hhkbs::keymap {
@@ -61,6 +62,16 @@ std::vector<BackupEntry> listBackups(const std::filesystem::path& directory)
         return a.path.filename() > b.path.filename();
     });
     return entries;
+}
+
+void deleteBackup(const std::filesystem::path& directory, const BackupEntry& entry)
+{
+    if (entry.path.parent_path() != directory || !parse(entry.path))
+        throw std::invalid_argument("Not a backup file: " + entry.path.string());
+    std::error_code error;
+    if (!std::filesystem::remove(entry.path, error) && !error)
+        error = std::make_error_code(std::errc::no_such_file_or_directory);
+    if (error) throw std::system_error(error, "Delete backup");
 }
 
 }  // namespace hhkbs::keymap

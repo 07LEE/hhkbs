@@ -17,7 +17,7 @@ public:
     [[nodiscard]] bool shouldClose() const { return close_; }
 private:
     enum class Action { None, Read, SwitchProfile, Import, Restore, Close };
-    enum class Dialog { None, Assign, Unsaved, Import, Export, Overwrite, Defaults, Apply, Backups };
+    enum class Dialog { None, Assign, Unsaved, Import, Export, Overwrite, Defaults, Apply, Backups, DeleteBackup };
     struct ScanResult {
         std::string status;
         std::string detail;
@@ -41,6 +41,7 @@ private:
     void openFiles(bool save);
     void openBackups();
     void drawBackups();
+    void drawDeleteBackup();
     [[nodiscard]] bool loadBackup(const hhkbs::keymap::BackupEntry& entry);
     void drawDialog();
     void drawFiles();

@@ -22,4 +22,7 @@ struct BackupEntry {
 // Backups in the directory, newest first. Files with any other name are ignored.
 [[nodiscard]] std::vector<BackupEntry> listBackups(const std::filesystem::path& directory);
 
+// Deletes one backup. Refuses anything that is not a backup file directly inside `directory`.
+void deleteBackup(const std::filesystem::path& directory, const BackupEntry& entry);
+
 }  // namespace hhkbs::keymap
