@@ -418,11 +418,11 @@ void MainWindow::draw()
         if (selected) ImGui::PopStyleColor();
     }
     ImGui::EndDisabled();
-    ImGui::TextWrapped("%s%s", summary_.c_str(), unsaved() ? "  /  Unsaved changes" : "");
+    const std::string caption = summary_ + (unsaved() ? (summary_.empty() ? "Unsaved changes" : "  /  Unsaved changes") : "");
     const float boardHeight = std::max(320.f, ImGui::GetContentRegionAvail().y-115.f);
     ImGui::BeginDisabled(busy);
     if (loaded_) {
-        if (const auto slot = drawKeyboard(keymap_, layer_, boardHeight)) {
+        if (const auto slot = drawKeyboard(keymap_, layer_, boardHeight, caption)) {
             slot_ = *slot;
             assignment_.reset(keymap_.scanCode(layer_,slot_));
             dialog_ = Dialog::Assign;
