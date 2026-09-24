@@ -69,6 +69,8 @@ target_compile_features(hhkbs_core PUBLIC cxx_std_20)
 
 add_executable(hhkbs
     src/main.cpp
+    src/gui/DialogWidgets.cpp
+    src/gui/DialogWidgets.h
     src/gui/KeyAssignmentDialog.cpp
     src/gui/KeyAssignmentDialog.h
     src/gui/KeyboardWidget.cpp

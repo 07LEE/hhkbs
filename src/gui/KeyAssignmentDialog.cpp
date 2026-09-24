@@ -1,5 +1,5 @@
 #include "gui/KeyAssignmentDialog.h"
-#include "gui/Theme.h"
+#include "gui/DialogWidgets.h"
 #include "keymap/ScanCodeCatalog.h"
 #include <imgui.h>
 #include <algorithm>
@@ -23,10 +23,7 @@ void KeyAssignmentDialog::reset(hhkbs::keymap::Keymap::ScanCode code, std::strin
     scrollToCurrent_ = true;
 }
 std::optional<hhkbs::keymap::Keymap::ScanCode> KeyAssignmentDialog::draw(bool& cancelled) {
-    const auto& style = ImGui::GetStyle();
-    ImGui::SetWindowFontScale(1.25f);
-    ImGui::TextUnformatted("Assign key");
-    ImGui::SetWindowFontScale(1.f);
+    dialog::title("Assign key");
     ImGui::TextDisabled("%s  /  now: %s (0x%04X)", keyName_.c_str(),
                         hhkbs::keymap::ScanCodeCatalog::labelFor(current_).c_str(), current_);
     ImGui::SetNextItemWidth(-1);
@@ -82,20 +79,9 @@ std::optional<hhkbs::keymap::Keymap::ScanCode> KeyAssignmentDialog::draw(bool& c
         ImGui::TextColored(ImVec4(.85f, .3f, .3f, 1), "Enter a hexadecimal value from 0000 to FFFF.");
     }
 
-    // Footer: Cancel, then the one primary action, right-aligned like the file dialogs.
-    const float buttonWidth = 110.f;
-    ImGui::SetCursorPosX(ImGui::GetWindowWidth() - style.WindowPadding.x - 2 * buttonWidth - style.ItemSpacing.x);
-    if (ImGui::Button("Cancel", ImVec2(buttonWidth, 0))) cancelled = true;
-    ImGui::SameLine();
-    const auto& palette = theme::palette();
-    ImGui::PushStyleColor(ImGuiCol_Button, palette.accent);
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, palette.accentHovered);
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, palette.accentActive);
-    ImGui::PushStyleColor(ImGuiCol_Text, palette.accentText);
-    ImGui::BeginDisabled(!valid);
-    accept |= ImGui::Button("Assign", ImVec2(buttonWidth, 0));
-    ImGui::EndDisabled();
-    ImGui::PopStyleColor(4);
+    const int hit = dialog::footer({{"Cancel"}, {"Assign", true, false, valid}});
+    if (hit == 0) cancelled = true;
+    accept |= hit == 1;
     if (accept && valid) return static_cast<hhkbs::keymap::Keymap::ScanCode>(code);
     return std::nullopt;
 }
