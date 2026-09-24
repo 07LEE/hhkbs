@@ -45,7 +45,7 @@ int main() {
         const auto touch = [&](const std::string& fileName) { std::ofstream(backups / fileName) << "x"; };
         touch("backup-20260101-090000-profile1.toml");
         touch("backup-20260924-094806-profile4.toml");
-        touch(backupFileName(std::time(nullptr), 2));
+        touch("backup-20271231-235959-profile3.toml");
         touch("backup-20260101-090000-profile5.toml");
         touch("backup-20260101-090000-profile0.toml");
         touch("backup-2026-090000-profile1.toml");
@@ -84,6 +84,13 @@ int main() {
         if (!listBackups(directory / "missing").empty()) throw std::runtime_error("Missing folder should list nothing");
         if (backupFileName(0, 0).find("-profile1.toml") == std::string::npos)
             throw std::runtime_error("Backup file names use the 1-based profile number");
+        // A name written by backupFileName must be read back, whatever the clock says.
+        const auto roundTrip = directory / "roundtrip";
+        std::filesystem::create_directories(roundTrip);
+        std::ofstream(roundTrip / backupFileName(std::time(nullptr), 2)) << "x";
+        const auto written = listBackups(roundTrip);
+        if (written.size() != 1 || written[0].profile != 2)
+            throw std::runtime_error("A backup file name could not be read back");
 
         std::filesystem::remove_all(directory);
         std::cout << "Profile file tests passed\n";
