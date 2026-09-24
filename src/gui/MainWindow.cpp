@@ -378,6 +378,7 @@ void MainWindow::drawFiles()
                 keymap_ = std::move(profile);
                 savedBytes_ = keymap_.toBytes();
                 loaded_ = true;
+                selectedProfile_.reset();  // a file belongs to no keyboard profile until the user picks one
                 summary_ = "Imported " + target.filename().string();
                 status_ = "Imported profile";
                 message_.clear();
