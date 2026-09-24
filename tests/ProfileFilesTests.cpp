@@ -1,8 +1,10 @@
+#include "keymap/BackupFiles.h"
 #include "keymap/ProfileFiles.h"
 #include "keymap/KeyboardLayout.h"
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <ctime>
 #include <stdexcept>
 #include <unistd.h>
 
@@ -37,6 +39,29 @@ int main() {
         for (const auto& entry : std::filesystem::directory_iterator(directory))
             if (entry.path().string().find(".tmp.") != std::string::npos)
                 throw std::runtime_error("Temporary file leaked");
+
+        const auto backups = directory / "backups";
+        std::filesystem::create_directories(backups);
+        const auto touch = [&](const std::string& fileName) { std::ofstream(backups / fileName) << "x"; };
+        touch("backup-20260101-090000-profile1.toml");
+        touch("backup-20260924-094806-profile4.toml");
+        touch(backupFileName(std::time(nullptr), 2));
+        touch("backup-20260101-090000-profile5.toml");
+        touch("backup-20260101-090000-profile0.toml");
+        touch("backup-2026-090000-profile1.toml");
+        touch("backup-20260101-090000-profile1.toml.bak");
+        touch("notes.toml");
+        std::filesystem::create_directories(backups / "backup-20250101-000000-profile1.toml");
+        const auto listed = listBackups(backups);
+        if (listed.size() != 3) throw std::runtime_error("Backup list should hold exactly the three valid files");
+        if (listed[0].profile != 2 || listed[1].profile != 3 || listed[2].profile != 0)
+            throw std::runtime_error("Backups were not listed newest first with their profile");
+        if (listed[1].timestamp != "2026-09-24 09:48:06" || listed[2].timestamp != "2026-01-01 09:00:00")
+            throw std::runtime_error("Backup timestamp was not formatted");
+        if (!listBackups(directory / "missing").empty()) throw std::runtime_error("Missing folder should list nothing");
+        if (backupFileName(0, 0).find("-profile1.toml") == std::string::npos)
+            throw std::runtime_error("Backup file names use the 1-based profile number");
+
         std::filesystem::remove_all(directory);
         std::cout << "Profile file tests passed\n";
         return 0;

@@ -30,7 +30,7 @@ Read from keyboard reloads the profile the keyboard is currently using, for exam
 
 ## Applying to the keyboard
 
-Apply to keyboard overwrites the selected profile on the keyboard. HHKBS first saves the profile the keyboard currently holds as a TOML backup in `~/.local/state/hhkbs/backups/` (or under `$XDG_STATE_HOME/hhkbs/backups/`), writes the new profile, and reads it back to check it. If the check fails, HHKBS tries to restore the backup. The keyboard returns to the profile it was using before, and the backup can be loaded with Import.
+Apply to keyboard overwrites the selected profile on the keyboard. HHKBS first saves the profile the keyboard currently holds as a TOML backup in `~/.local/state/hhkbs/backups/` (or under `$XDG_STATE_HOME/hhkbs/backups/`), writes the new profile, and reads it back to check it. If the check fails, HHKBS tries to restore the backup. The keyboard returns to the profile it was using before, and Restore from backup lists the saved backups so one can be loaded back into the editor and applied.
 
 Do not unplug the keyboard while it is being written. HHKBS is unofficial, so keep your own backup of profiles you care about.
 

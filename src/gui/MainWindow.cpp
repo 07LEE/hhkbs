@@ -3,6 +3,7 @@
 #include "device/DeviceDiscovery.h"
 #include "device/HidrawTransport.h"
 #include "device/HhkbStudioDevice.h"
+#include "keymap/BackupFiles.h"
 #include "keymap/KeyboardLayout.h"
 #include "keymap/ProfileFiles.h"
 #include "keymap/ProfileSerializer.h"
@@ -21,15 +22,6 @@ using hhkbs::keymap::Keymap;
 using hhkbs::keymap::KeyboardLayout;
 
 namespace {
-
-std::filesystem::path backupDirectory()
-{
-    if (const char* state = std::getenv("XDG_STATE_HOME"); state && *state)
-        return std::filesystem::path(state) / "hhkbs" / "backups";
-    if (const char* home = std::getenv("HOME"); home && *home)
-        return std::filesystem::path(home) / ".local" / "state" / "hhkbs" / "backups";
-    return std::filesystem::temp_directory_path() / "hhkbs-backups";
-}
 
 std::unique_ptr<hhkbs::device::HidrawTransport> openStudio()
 {
@@ -147,14 +139,9 @@ void MainWindow::beginApply()
                 const auto backup = device.readCurrentProfile();
 
                 // Keep a copy of what the keyboard held; without it a failed write cannot be undone by hand.
-                const auto directory = backupDirectory();
+                const auto directory = hhkbs::keymap::backupDirectory();
                 std::filesystem::create_directories(directory);
-                char stamp[32]{};
-                const std::time_t now = std::time(nullptr);
-                std::tm local{};
-                localtime_r(&now, &local);
-                std::strftime(stamp, sizeof stamp, "%Y%m%d-%H%M%S", &local);
-                path = directory / ("backup-" + std::string(stamp) + "-profile" + std::to_string(profile + 1) + ".toml");
+                path = directory / hhkbs::keymap::backupFileName(std::time(nullptr), profile);
                 hhkbs::keymap::writeProfile(path, hhkbs::keymap::Keymap(backup), false);
 
                 device.writeCurrentProfile(bytes, backup);
@@ -203,6 +190,7 @@ void MainWindow::perform(Action action)
     if (action == Action::Read) beginScan();
     else if (action == Action::SwitchProfile) beginScan(requestedProfile_);
     else if (action == Action::Import) openFiles(false);
+    else if (action == Action::Restore) openBackups();
     else if (action == Action::Close) close_ = true;
 }
 void MainWindow::openFiles(bool save)
@@ -210,6 +198,44 @@ void MainWindow::openFiles(bool save)
     dialog_ = save ? Dialog::Export : Dialog::Import;
     dialogError_.clear();
     std::snprintf(path_.data(), path_.size(), "%s", (directory_ / (save ? "profile.toml" : "")).c_str());
+}
+void MainWindow::openBackups()
+{
+    backups_ = hhkbs::keymap::listBackups(hhkbs::keymap::backupDirectory());
+    dialogError_.clear();
+    dialog_ = Dialog::Backups;
+}
+void MainWindow::loadBackup(const hhkbs::keymap::BackupEntry& entry)
+{
+    try {
+        auto profile = hhkbs::keymap::readProfile(entry.path);
+        keymap_ = std::move(profile);
+        savedBytes_ = keymap_.toBytes();
+        loaded_ = true;
+        selectedProfile_ = entry.profile;
+        summary_ = "Backup of Profile " + std::to_string(entry.profile + 1) + " from " + entry.timestamp;
+        status_ = "Loaded backup";
+        message_.clear();
+        finishDialog();
+    } catch (const std::exception& error) { dialogError_ = error.what(); }
+}
+void MainWindow::drawBackups()
+{
+    ImGui::TextUnformatted("Restore from backup");
+    ImGui::TextWrapped("A backup is saved before every apply. Choosing one loads it into the editor for the profile it came from; "
+                       "nothing is written to the keyboard until you apply it.");
+    ImGui::TextDisabled("%s", hhkbs::keymap::backupDirectory().c_str());
+    ImGui::BeginChild("Backups", ImVec2(0, 250), ImGuiChildFlags_Borders);
+    if (backups_.empty()) ImGui::TextWrapped("No backups yet.");
+    for (std::size_t i=0; i<backups_.size(); ++i) {
+        const auto& entry = backups_[i];
+        const auto label = entry.timestamp + "    Profile " + std::to_string(entry.profile + 1);
+        ImGui::PushID(static_cast<int>(i));
+        if (ImGui::Selectable(label.c_str())) { loadBackup(entry); ImGui::PopID(); break; }
+        ImGui::PopID();
+    }
+    ImGui::EndChild();
+    ImGui::Dummy(ImVec2(0, 0));  // start a new row so the shared Cancel button sits below the list
 }
 void MainWindow::finishDialog()
 {
@@ -322,6 +348,7 @@ void MainWindow::drawDialog()
             perform(action);
         }
     } else if (dialog_ == Dialog::Import || dialog_ == Dialog::Export) drawFiles();
+    else if (dialog_ == Dialog::Backups) drawBackups();
     else if (dialog_ == Dialog::Overwrite) {
         ImGui::TextWrapped("Replace the existing file?\n%s", path_.data());
         if (ImGui::Button("Replace file")) saveFile(true);
@@ -436,6 +463,8 @@ void MainWindow::draw()
     ImGui::SetItemTooltip("Read the profile the keyboard is currently using");
     ImGui::SameLine();
     if (ImGui::Button("Import")) request(Action::Import);
+    ImGui::SameLine();
+    if (ImGui::Button("Restore from backup")) request(Action::Restore);
     ImGui::SameLine();
     ImGui::BeginDisabled(!loaded_);
     if (ImGui::Button("Export")) openFiles(true);

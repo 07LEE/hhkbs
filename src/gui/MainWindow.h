@@ -1,5 +1,6 @@
 #pragma once
 #include "gui/KeyAssignmentDialog.h"
+#include "keymap/BackupFiles.h"
 #include "keymap/Keymap.h"
 #include <array>
 #include <filesystem>
@@ -15,8 +16,8 @@ public:
     void requestClose();
     [[nodiscard]] bool shouldClose() const { return close_; }
 private:
-    enum class Action { None, Read, SwitchProfile, Import, Close };
-    enum class Dialog { None, Assign, Unsaved, Import, Export, Overwrite, Defaults, Apply };
+    enum class Action { None, Read, SwitchProfile, Import, Restore, Close };
+    enum class Dialog { None, Assign, Unsaved, Import, Export, Overwrite, Defaults, Apply, Backups };
     struct ScanResult {
         std::string status;
         std::string detail;
@@ -38,6 +39,9 @@ private:
     void request(Action action);
     void perform(Action action);
     void openFiles(bool save);
+    void openBackups();
+    void drawBackups();
+    void loadBackup(const hhkbs::keymap::BackupEntry& entry);
     void drawDialog();
     void drawFiles();
     void saveFile(bool overwrite);
@@ -46,6 +50,7 @@ private:
 
     hhkbs::keymap::Keymap keymap_;
     std::vector<std::uint8_t> savedBytes_;
+    std::vector<hhkbs::keymap::BackupEntry> backups_;
     std::future<ScanResult> scan_;
     std::future<ApplyResult> apply_;
     // The keyboard profile shown in the editor; only set once it has been read or applied.

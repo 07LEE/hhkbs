@@ -47,6 +47,8 @@ add_library(hhkbs_core STATIC
     src/device/HidrawTransport.cpp
     src/device/HidrawTransport.h
     src/device/Transport.h
+    src/keymap/BackupFiles.cpp
+    src/keymap/BackupFiles.h
     src/keymap/Keymap.cpp
     src/keymap/Keymap.h
     src/keymap/KeyboardLayout.cpp
