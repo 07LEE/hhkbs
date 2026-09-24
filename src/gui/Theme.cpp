@@ -98,6 +98,7 @@ static void apply(bool dark)
         current.window = ImVec4(.97f,.98f,.99f,1);
         c[ImGuiCol_WindowBg] = current.window;
         c[ImGuiCol_Button] = ImVec4(.88f,.91f,.95f,1);
+        c[ImGuiCol_FrameBg] = ImVec4(.93f,.95f,.98f,1);
         current.selected = ImVec4(.69f,.80f,.97f,1);
         current.accent = ImVec4(.25f,.52f,.96f,1);
         current.accentHovered = ImVec4(.20f,.46f,.90f,1);

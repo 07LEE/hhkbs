@@ -237,7 +237,8 @@ void MainWindow::openFiles(bool save)
 {
     dialog_ = save ? Dialog::Export : Dialog::Import;
     dialogError_.clear();
-    std::snprintf(path_.data(), path_.size(), "%s", (directory_ / (save ? "profile.toml" : "")).c_str());
+    path_[0] = '\0';
+    std::snprintf(fileName_.data(), fileName_.size(), "%s", save ? "profile.toml" : "");
 }
 void MainWindow::openApply()
 {
@@ -406,73 +407,190 @@ void MainWindow::saveFile(bool overwrite)
     } catch (const std::exception& error) { dialogError_ = error.what(); dialog_ = Dialog::Export; }
 }
 
+namespace {
+std::string fileTime(const std::filesystem::file_time_type& time)
+{
+    const auto system = std::chrono::clock_cast<std::chrono::system_clock>(time);
+    const std::time_t seconds = std::chrono::system_clock::to_time_t(system);
+    std::tm local{};
+    ::localtime_r(&seconds, &local);
+    char text[32];
+    std::strftime(text, sizeof text, "%Y-%m-%d %H:%M", &local);
+    return text;
+}
+
+std::string fileSize(std::uintmax_t bytes)
+{
+    char text[32];
+    if (bytes < 1024) std::snprintf(text, sizeof text, "%ju B", bytes);
+    else std::snprintf(text, sizeof text, "%.1f KB", static_cast<double>(bytes) / 1024.0);
+    return text;
+}
+
+void drawFolderIcon(ImDrawList* draw, ImVec2 topLeft, float height)
+{
+    const float w = height * 1.05f, h = height * .7f;
+    const ImVec2 min(topLeft.x, topLeft.y + (height - h) / 2);
+    const ImU32 color = ImGui::GetColorU32(ImGuiCol_TextDisabled);
+    draw->AddRectFilled(min, ImVec2(min.x + w * .45f, min.y + h * .3f), color, 2.f);
+    draw->AddRectFilled(ImVec2(min.x, min.y + h * .15f), ImVec2(min.x + w, min.y + h), color, 2.f);
+}
+}
+
 void MainWindow::drawFiles()
 {
     const bool save = dialog_ == Dialog::Export;
+    const auto& style = ImGui::GetStyle();
+    ImGui::SetWindowFontScale(1.25f);
     ImGui::TextUnformatted(save ? "Export TOML profile" : "Import TOML profile");
-    ImGui::TextWrapped("Folder: %s", directory_.c_str());
-    if (ImGui::Button("Parent folder")) directory_ = directory_.parent_path().empty() ? "/" : directory_.parent_path();
-    ImGui::SameLine();
-    if (ImGui::Button("Open path folder")) {
-        std::error_code ec;
-        auto entered = std::filesystem::path(path_.data());
-        if (std::filesystem::is_directory(entered, ec)) directory_ = entered;
-        else if (std::filesystem::is_directory(entered.parent_path(), ec)) directory_ = entered.parent_path();
-        else dialogError_ = "That folder is unavailable.";
+    ImGui::SetWindowFontScale(1.f);
+
+    // Path bar: up button plus an editable folder; typing a .toml file path selects that file.
+    if (shownDir_ != directory_) {
+        std::snprintf(dirInput_.data(), dirInput_.size(), "%s", directory_.c_str());
+        shownDir_ = directory_;
     }
-    ImGui::BeginChild("Files", ImVec2(0, 250), ImGuiChildFlags_Borders);
-    struct Entry { std::filesystem::path path; bool directory; };
+    const auto goTo = [this](const std::filesystem::path& folder) {
+        std::error_code ec;
+        const auto canonical = std::filesystem::weakly_canonical(folder, ec);
+        directory_ = ec ? folder : canonical;
+        path_[0] = '\0';
+        dialogError_.clear();
+    };
+    if (ImGui::ArrowButton("##up", ImGuiDir_Up)) goTo(directory_.parent_path().empty() ? std::filesystem::path("/") : directory_.parent_path());
+    ImGui::SetItemTooltip("Parent folder");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(-1);
+    if (ImGui::InputText("##dir", dirInput_.data(), dirInput_.size(), ImGuiInputTextFlags_EnterReturnsTrue)) {
+        std::error_code ec;
+        const std::filesystem::path entered(dirInput_.data());
+        if (std::filesystem::is_directory(entered, ec)) goTo(entered);
+        else if (std::filesystem::is_regular_file(entered, ec)) {
+            goTo(entered.parent_path());
+            std::snprintf(path_.data(), path_.size(), "%s", (directory_ / entered.filename()).c_str());
+            std::snprintf(fileName_.data(), fileName_.size(), "%s", entered.filename().c_str());
+        } else dialogError_ = "That folder is unavailable.";
+    }
+
+    struct Entry { std::filesystem::path path; bool directory; std::string modified, size; };
     std::vector<Entry> entries;
     std::error_code error;
     std::filesystem::directory_iterator it(directory_, error), end;
     while (!error && it != end) {
         std::error_code ec;
         const bool isDirectory = it->is_directory(ec);
-        if (!ec && (isDirectory || it->path().extension() == ".toml")) entries.push_back({it->path(), isDirectory});
+        const bool hidden = it->path().filename().string().starts_with('.');
+        if (!ec && !hidden && (isDirectory || it->path().extension() == ".toml")) {
+            Entry entry{it->path(), isDirectory, {}, {}};
+            std::error_code timeError, sizeError;
+            const auto time = it->last_write_time(timeError);
+            if (!timeError) entry.modified = fileTime(time);
+            if (!isDirectory) { const auto bytes = it->file_size(sizeError); if (!sizeError) entry.size = fileSize(bytes); }
+            entries.push_back(std::move(entry));
+        }
         it.increment(error);
     }
-    if (error) ImGui::TextWrapped("Cannot list folder: %s", error.message().c_str());
     std::sort(entries.begin(), entries.end(), [](const auto& a, const auto& b) {
         return a.directory != b.directory ? a.directory > b.directory : a.path.filename() < b.path.filename();
     });
-    for (std::size_t i=0; i<entries.size(); ++i) {
-        const auto& entry = entries[i];
-        const auto name = (entry.directory ? "[Folder] " : "") + entry.path.filename().string();
-        ImGui::PushID(static_cast<int>(i));
-        if (ImGui::Selectable(name.c_str())) {
-            if (entry.directory) directory_ = entry.path;
-            else std::snprintf(path_.data(), path_.size(), "%s", entry.path.c_str());
+
+    const std::filesystem::path chosen = save ? directory_ / fileName_.data() : std::filesystem::path(path_.data());
+    ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(8, 4));
+    ImGui::BeginChild("Files", ImVec2(0, 250), ImGuiChildFlags_Borders);
+    if (ImGui::BeginTable("files", 3, ImGuiTableFlags_ScrollY | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingFixedFit)) {
+        ImGui::TableSetupScrollFreeze(0, 1);
+        ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn("Modified", ImGuiTableColumnFlags_WidthFixed, 130.f);
+        ImGui::TableSetupColumn("Size", ImGuiTableColumnFlags_WidthFixed, 70.f);
+        ImGui::TableHeadersRow();
+        const float iconWidth = ImGui::GetTextLineHeight() * 1.05f + 8.f;
+        for (std::size_t i=0; i<entries.size(); ++i) {
+            const auto& entry = entries[i];
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::PushID(static_cast<int>(i));
+            const ImVec2 iconPos = ImGui::GetCursorScreenPos();
+            ImGui::Indent(entry.directory ? iconWidth : 0.f);
+            const auto name = entry.path.filename().string();
+            const bool picked = !entry.directory && chosen == entry.path;
+            const bool activated = ImGui::Selectable(name.c_str(), picked,
+                ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowDoubleClick);
+            ImGui::Unindent(entry.directory ? iconWidth : 0.f);
+            if (entry.directory) drawFolderIcon(ImGui::GetWindowDrawList(), iconPos, ImGui::GetTextLineHeight());
+            ImGui::TableNextColumn();
+            ImGui::TextDisabled("%s", entry.modified.c_str());
+            ImGui::TableNextColumn();
+            ImGui::TextDisabled("%s", entry.size.c_str());
+            ImGui::PopID();
+            if (!activated) continue;
+            const bool doubleClick = ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
+            if (entry.directory) { if (doubleClick) goTo(entry.path); continue; }
             dialogError_.clear();
+            std::snprintf(path_.data(), path_.size(), "%s", entry.path.c_str());
+            std::snprintf(fileName_.data(), fileName_.size(), "%s", name.c_str());
+            if (doubleClick && !save) {
+                // Same path as the Import button below.
+                importPath_ = entry.path;
+            }
         }
-        ImGui::PopID();
+        if (entries.empty()) {
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::TextDisabled(error ? "Cannot list folder: %s" : "No folders or .toml files here", error.message().c_str());
+        }
+        ImGui::EndTable();
     }
     ImGui::EndChild();
-    ImGui::SetNextItemWidth(-1);
-    ImGui::InputText("##path", path_.data(), path_.size());
-    if (ImGui::Button(save ? "Export" : "Import", ImVec2(110,0))) {
-        try {
-            auto target = std::filesystem::path(path_.data());
-            if (target.empty()) throw std::runtime_error("Choose a file.");
-            if (save) {
-                if (target.extension().empty()) target += ".toml";
-                std::snprintf(path_.data(), path_.size(), "%s", target.c_str());
-                std::error_code ec;
-                if (std::filesystem::exists(std::filesystem::symlink_status(target, ec))) dialog_ = Dialog::Overwrite;
-                else saveFile(false);
-            } else {
-                auto profile = hhkbs::keymap::readProfile(target);
-                keymap_ = std::move(profile);
-                savedBytes_ = keymap_.toBytes();
-                loaded_ = true;
-                selectedProfile_.reset();  // a file belongs to no keyboard profile until the user picks one
-                summary_ = "Imported " + target.filename().string();
-                status_ = "Imported profile";
-                message_.clear();
-                directory_ = target.parent_path();
-                finishDialog();
-            }
-        } catch (const std::exception& error) { dialogError_ = error.what(); }
+    ImGui::PopStyleVar();
+
+    if (save) {
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted("File name");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(-1);
+        ImGui::InputText("##name", fileName_.data(), fileName_.size());
     }
+    if (!dialogError_.empty()) ImGui::TextWrapped("%s", dialogError_.c_str());
+
+    // Footer: Cancel, then the one primary action, right-aligned.
+    const char* action = save ? "Export" : "Import";
+    const float buttonWidth = 110.f;
+    ImGui::SetCursorPosX(ImGui::GetWindowWidth() - style.WindowPadding.x - 2 * buttonWidth - style.ItemSpacing.x);
+    if (ImGui::Button("Cancel", ImVec2(buttonWidth, 0))) { cancelDialog(); return; }
+    ImGui::SameLine();
+    const bool ready = save ? fileName_[0] != '\0' : (path_[0] != '\0' || !importPath_.empty());
+    ImGui::PushStyleColor(ImGuiCol_Button, theme::palette().accent);
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, theme::palette().accentHovered);
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, theme::palette().accentActive);
+    ImGui::PushStyleColor(ImGuiCol_Text, theme::palette().accentText);
+    ImGui::BeginDisabled(!ready);
+    const bool pressed = ImGui::Button(action, ImVec2(buttonWidth, 0));
+    ImGui::EndDisabled();
+    ImGui::PopStyleColor(4);
+    if (!pressed && importPath_.empty()) return;
+    try {
+        if (save) {
+            auto target = directory_ / fileName_.data();
+            if (target.extension().empty()) target += ".toml";
+            std::snprintf(path_.data(), path_.size(), "%s", target.c_str());
+            std::error_code ec;
+            if (std::filesystem::exists(std::filesystem::symlink_status(target, ec))) dialog_ = Dialog::Overwrite;
+            else saveFile(false);
+        } else {
+            const auto target = importPath_.empty() ? std::filesystem::path(path_.data()) : importPath_;
+            importPath_.clear();
+            auto profile = hhkbs::keymap::readProfile(target);
+            keymap_ = std::move(profile);
+            savedBytes_ = keymap_.toBytes();
+            loaded_ = true;
+            selectedProfile_.reset();  // a file belongs to no keyboard profile until the user picks one
+            summary_ = "Imported " + target.filename().string();
+            status_ = "Imported profile";
+            message_.clear();
+            directory_ = target.parent_path();
+            finishDialog();
+        }
+    } catch (const std::exception& error) { importPath_.clear(); dialogError_ = error.what(); }
 }
 
 void MainWindow::drawDialog()
@@ -483,7 +601,8 @@ void MainWindow::drawDialog()
     ImGui::SetNextWindowPos(viewport->GetCenter(), ImGuiCond_Appearing, ImVec2(.5f,.5f));
     ImGui::SetNextWindowSize(ImVec2(620,0), ImGuiCond_Always);
     if (!ImGui::BeginPopupModal("HHKBS", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
-    const bool ownCancel = dialog_ == Dialog::Backups;  // the backups tabs draw Cancel beside their own buttons
+    const bool filesDialog = dialog_ == Dialog::Import || dialog_ == Dialog::Export;
+    const bool ownCancel = dialog_ == Dialog::Backups || filesDialog;  // these draw Cancel (and errors) themselves
     if (dialog_ == Dialog::Assign) {
         if (const auto code = assignment_.draw()) { keymap_.setScanCode(layer_, slot_, *code); finishDialog(); }
     } else if (dialog_ == Dialog::Unsaved) {
@@ -540,7 +659,7 @@ void MainWindow::drawDialog()
         if (ImGui::Button("Restore and apply")) { restore(); finishDialog(); openApply(); }
         ImGui::EndDisabled();
     }
-    if (!dialogError_.empty()) ImGui::TextWrapped("%s", dialogError_.c_str());
+    if (!filesDialog && !dialogError_.empty()) ImGui::TextWrapped("%s", dialogError_.c_str());
     if (!ownCancel) {
         ImGui::SameLine();
         if (ImGui::Button("Cancel")) cancelDialog();
