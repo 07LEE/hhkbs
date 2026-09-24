@@ -1,0 +1,53 @@
+name: Release
+
+# Pushing a tag such as v0.0.1 builds Linux x86_64, tests it and publishes a GitHub release.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the tag matches the project version
+        run: |
+          version=$(sed -n 's/^ *VERSION \([0-9.]*\)$/\1/p' CMakeLists.txt | head -n 1)
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match the project version $version" >&2
+            exit 1
+          fi
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            xvfb libgl1-mesa-dev libgl1-mesa-dri \
+            libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev
+
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Package
+        run: |
+          name="hhkbs-${GITHUB_REF_NAME}-linux-x86_64"
+          cmake --install build --strip --prefix "$name"
+          cp packaging/60-hhkbs.rules "$name/"
+          tar -czf "$name.tar.gz" "$name"
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" "hhkbs-${GITHUB_REF_NAME}-linux-x86_64.tar.gz" \
+            --verify-tag --title "$GITHUB_REF_NAME" --generate-notes
