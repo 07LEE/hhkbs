@@ -10,6 +10,9 @@
 namespace theme {
 namespace {
 Palette current;
+Mode currentMode = Mode::Auto;
+bool currentDark = false;
+bool initialized = false;
 
 std::string run(const char* command)
 {
@@ -28,7 +31,7 @@ std::string run(const char* command)
 bool contains(const std::string& text, std::string_view needle) { return text.find(needle) != std::string::npos; }
 }
 
-Mode requestedMode()
+static Mode requestedMode()
 {
     const char* value = std::getenv("HHKBS_THEME");
     if (!value) return Mode::Auto;
@@ -38,7 +41,7 @@ Mode requestedMode()
     return Mode::Auto;
 }
 
-bool systemPrefersDark()
+static bool systemPrefersDark()
 {
     // GNOME, and any desktop whose XDG portal mirrors org.gnome.desktop.interface.
     const auto scheme = run("gsettings get org.gnome.desktop.interface color-scheme 2>/dev/null");
@@ -53,7 +56,7 @@ bool systemPrefersDark()
     return contains(run("gsettings get org.gnome.desktop.interface gtk-theme 2>/dev/null"), "dark");
 }
 
-void apply(bool dark)
+static void apply(bool dark)
 {
     if (dark) ImGui::StyleColorsDark(); else ImGui::StyleColorsLight();
     auto& style = ImGui::GetStyle();
@@ -112,5 +115,38 @@ void apply(bool dark)
     }
 }
 
-const Palette& palette() { return current; }
+static void resolve()
+{
+    const bool dark = currentMode == Mode::Auto ? systemPrefersDark() : currentMode == Mode::Dark;
+    if (dark != currentDark || !initialized) apply(dark);
+    currentDark = dark;
+    initialized = true;
+}
+
+Mode mode()
+{
+    if (!initialized) { currentMode = requestedMode(); resolve(); }
+    return currentMode;
+}
+
+void setMode(Mode next)
+{
+    currentMode = next;
+    resolve();
+}
+
+const char* modeName(Mode m) { return m == Mode::Auto ? "Auto" : m == Mode::Light ? "Light" : "Dark"; }
+
+Mode nextMode(Mode m) { return m == Mode::Auto ? Mode::Light : m == Mode::Light ? Mode::Dark : Mode::Auto; }
+
+void refresh()
+{
+    if (currentMode == Mode::Auto) resolve();
+}
+
+const Palette& palette()
+{
+    mode();
+    return current;
+}
 }

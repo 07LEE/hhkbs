@@ -11,6 +11,7 @@
 #include <imgui.h>
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
@@ -548,6 +549,36 @@ void MainWindow::drawDialog()
     ImGui::EndPopup();
 }
 
+namespace {
+constexpr float kPi = 3.14159265f;
+
+// Auto = half-filled disc, Light = sun, Dark = crescent moon.
+void drawThemeIcon(ImDrawList* draw, ImVec2 min, ImVec2 max, theme::Mode mode)
+{
+    const ImVec2 center((min.x + max.x) / 2, (min.y + max.y) / 2);
+    const float r = (max.x - min.x) * .2f;
+    const ImU32 color = ImGui::GetColorU32(ImGuiCol_Text);
+    if (mode == theme::Mode::Auto) {
+        draw->AddCircle(center, r, color, 0, 1.6f);
+        draw->PathArcTo(center, r, -kPi / 2, kPi / 2);
+        draw->PathFillConvex(color);
+    } else if (mode == theme::Mode::Light) {
+        draw->AddCircleFilled(center, r * .7f, color);
+        for (int i = 0; i < 8; ++i) {
+            const float a = i * kPi / 4;
+            const ImVec2 dir(std::cos(a), std::sin(a));
+            draw->AddLine(ImVec2(center.x + dir.x * r * 1.15f, center.y + dir.y * r * 1.15f),
+                          ImVec2(center.x + dir.x * r * 1.6f, center.y + dir.y * r * 1.6f), color, 1.6f);
+        }
+    } else {
+        draw->AddCircleFilled(center, r * 1.1f, color);
+        draw->AddCircleFilled(ImVec2(center.x + r * .6f, center.y - r * .5f), r * .95f,
+                              ImGui::GetColorU32(ImGui::IsItemActive() ? ImGuiCol_ButtonActive :
+                                                 ImGui::IsItemHovered() ? ImGuiCol_ButtonHovered : ImGuiCol_Button));
+    }
+}
+}
+
 void MainWindow::draw()
 {
     pollScan();
@@ -570,6 +601,13 @@ void MainWindow::draw()
     ImGui::SameLine();
     ImGui::SetCursorPosY(smallTop);
     ImGui::Text("  /  %s", status_.c_str());
+    // Cycles Auto (follow the desktop) -> Light -> Dark; the icon shows the current mode.
+    const float themeSize = ImGui::GetFrameHeight();
+    ImGui::SameLine(ImGui::GetWindowWidth() - ImGui::GetStyle().WindowPadding.x - themeSize);
+    ImGui::SetCursorPosY(titleTop);
+    if (ImGui::Button("##theme", ImVec2(themeSize, themeSize))) theme::setMode(theme::nextMode(theme::mode()));
+    drawThemeIcon(ImGui::GetWindowDrawList(), ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), theme::mode());
+    ImGui::SetItemTooltip("Theme: %s (click to change)", theme::modeName(theme::mode()));
     ImGui::Spacing();
     ImGui::Separator();
     ImGui::Spacing();

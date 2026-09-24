@@ -86,9 +86,7 @@ int main(int argc, char* argv[])
     io.IniFilename = nullptr;
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     loadSystemFont(*io.Fonts);
-    const auto themeMode = theme::requestedMode();
-    bool dark = themeMode == theme::Mode::Auto ? theme::systemPrefersDark() : themeMode == theme::Mode::Dark;
-    theme::apply(dark);
+    theme::mode();
     if (!ImGui_ImplGlfw_InitForOpenGL(window.get(),true) || !ImGui_ImplOpenGL3_Init("#version 130")) {
         std::fprintf(stderr,"Could not initialize the GUI backend.\n");
         ImGui::DestroyContext();
@@ -111,10 +109,7 @@ int main(int argc, char* argv[])
             }
             // Follow the desktop's color scheme when the window regains focus.
             const bool focused = glfwGetWindowAttrib(window.get(),GLFW_FOCUSED) == GLFW_TRUE;
-            if (focused && !wasFocused && themeMode == theme::Mode::Auto) {
-                const bool now = theme::systemPrefersDark();
-                if (now != dark) { dark = now; theme::apply(dark); }
-            }
+            if (focused && !wasFocused) theme::refresh();
             wasFocused = focused;
             ImGui_ImplOpenGL3_NewFrame();
             ImGui_ImplGlfw_NewFrame();

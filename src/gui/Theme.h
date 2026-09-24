@@ -14,10 +14,14 @@ struct Palette {
 
 enum class Mode { Auto, Light, Dark };
 
-// HHKBS_THEME=light|dark forces a mode; otherwise the desktop's color scheme decides.
-Mode requestedMode();
-bool systemPrefersDark();
+// The mode starts from HHKBS_THEME=light|dark (default Auto: follow the desktop).
+Mode mode();
+void setMode(Mode mode);
+const char* modeName(Mode mode);
+Mode nextMode(Mode mode);
 
-void apply(bool dark);
+// Re-reads the desktop's color scheme; only has an effect in Auto mode.
+void refresh();
+
 const Palette& palette();
 }
