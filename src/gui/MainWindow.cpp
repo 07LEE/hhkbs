@@ -15,6 +15,9 @@
 #include <ctime>
 #include <exception>
 #include <memory>
+#include <unistd.h>
+#include <spawn.h>
+#include <sys/wait.h>
 #include <stdexcept>
 #include <utility>
 
@@ -36,6 +39,30 @@ std::unique_ptr<hhkbs::device::HidrawTransport> openStudio()
     throw std::runtime_error("No writable HHKB Studio was found. Check the connection and udev rules.");
 }
 
+// Runs xdg-open in the background. The path is passed as an argument, never spliced into a command line.
+bool openFolder(const std::filesystem::path& folder)
+{
+    const std::string command = "xdg-open \"$1\" >/dev/null 2>&1 &";
+    const char* argv[] = {"sh", "-c", command.c_str(), "sh", folder.c_str(), nullptr};
+    pid_t child = 0;
+    if (::posix_spawnp(&child, "sh", nullptr, nullptr, const_cast<char* const*>(argv), environ) != 0) return false;
+    int status = 0;
+    return ::waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 0;
+}
+
+bool commandExists(const char* name)
+{
+    const char* path = std::getenv("PATH");
+    if (!path) return false;
+    std::string list = path;
+    for (std::size_t start = 0; start <= list.size();) {
+        const auto end = std::min(list.find(':', start), list.size());
+        if (::access((list.substr(start, end - start) + "/" + name).c_str(), X_OK) == 0) return true;
+        start = end + 1;
+    }
+    return false;
+}
+
 }  // namespace
 
 MainWindow::MainWindow(bool demoMode)
@@ -53,6 +80,12 @@ MainWindow::MainWindow(bool demoMode)
         status_ = "Demo profile";
         summary_ = "Offline US profile / Changes are kept in memory";
     } else beginScan();
+    refreshBackupCount();
+}
+
+void MainWindow::refreshBackupCount()
+{
+    backupCount_ = hhkbs::keymap::listBackups(hhkbs::keymap::backupDirectory()).size();
 }
 
 bool MainWindow::unsaved() const { return loaded_ && keymap_.toBytes() != savedBytes_; }
@@ -147,7 +180,7 @@ void MainWindow::beginApply()
             });
             result.ok = true;
             result.profile = profile;
-            result.message = "Applied to profile " + std::to_string(profile + 1) + ". Previous profile saved to " + path.string();
+            result.message = "Applied to profile " + std::to_string(profile + 1) + ". The previous profile was saved as " + path.filename().string() + ".";
         } catch (const std::exception& error) { result.message = error.what(); }
         return result;
     });
@@ -164,6 +197,7 @@ void MainWindow::pollApply()
             savedBytes_ = keymap_.toBytes();
             selectedProfile_ = result.profile;
             status_ = "Applied";
+            refreshBackupCount();
         } else status_ = "Apply failed";
     } catch (const std::exception& error) { status_ = "Apply failed"; message_ = error.what(); }
 }
@@ -213,6 +247,7 @@ void MainWindow::openBackups(bool manage)
 {
     backups_ = hhkbs::keymap::listBackups(hhkbs::keymap::backupDirectory());
     backupChoice_.reset();
+    backupCount_ = backups_.size();
     dialogError_.clear();
     selectManageTab_ = manage;
     dialog_ = Dialog::Backups;
@@ -269,6 +304,8 @@ void MainWindow::drawBackups()
         if (ImGui::Button("Restore and apply")) requestLoadBackup(backups_[*backupChoice_], true);
         ImGui::EndDisabled();
         ImGui::EndDisabled();
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel")) cancelDialog();
         ImGui::EndTabItem();
     }
     // Coming back from a delete or clean-up lands on the tab the user left.
@@ -284,10 +321,20 @@ void MainWindow::drawBackups()
         ImGui::BeginDisabled(backups_.empty());
         if (ImGui::Button("Clean up...")) dialog_ = Dialog::CleanBackups;
         ImGui::EndDisabled();
+        ImGui::SameLine();
+        ImGui::BeginDisabled(!std::filesystem::is_directory(hhkbs::keymap::backupDirectory()));
+        if (ImGui::Button("Open folder")) {
+            if (!commandExists("xdg-open"))
+                dialogError_ = "xdg-open was not found. Open " + hhkbs::keymap::backupDirectory().string() + " yourself.";
+            else if (!openFolder(hhkbs::keymap::backupDirectory())) dialogError_ = "Could not open the folder.";
+            else dialogError_.clear();
+        }
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel")) cancelDialog();
         ImGui::EndTabItem();
     }
     ImGui::EndTabBar();
-    ImGui::Dummy(ImVec2(0, 0));  // start a new row so the shared Cancel button sits below the tab content
 }
 void MainWindow::drawCleanBackups()
 {
@@ -329,6 +376,11 @@ void MainWindow::drawDeleteBackup()
     }
     ImGui::SameLine();
     if (ImGui::Button("Back")) { dialog_ = Dialog::Backups; selectManageTab_ = true; }
+}
+void MainWindow::cancelDialog()
+{
+    pending_ = Action::None;
+    finishDialog();
 }
 void MainWindow::finishDialog()
 {
@@ -429,6 +481,7 @@ void MainWindow::drawDialog()
     ImGui::SetNextWindowPos(viewport->GetCenter(), ImGuiCond_Appearing, ImVec2(.5f,.5f));
     ImGui::SetNextWindowSize(ImVec2(620,0), ImGuiCond_Always);
     if (!ImGui::BeginPopupModal("HHKBS", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
+    const bool ownCancel = dialog_ == Dialog::Backups;  // the backups tabs draw Cancel beside their own buttons
     if (dialog_ == Dialog::Assign) {
         if (const auto code = assignment_.draw()) { keymap_.setScanCode(layer_, slot_, *code); finishDialog(); }
     } else if (dialog_ == Dialog::Unsaved) {
@@ -486,11 +539,11 @@ void MainWindow::drawDialog()
         ImGui::EndDisabled();
     }
     if (!dialogError_.empty()) ImGui::TextWrapped("%s", dialogError_.c_str());
-    ImGui::SameLine();
-    if (ImGui::Button("Cancel") || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
-        pending_ = Action::None;
-        finishDialog();
+    if (!ownCancel) {
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel")) cancelDialog();
     }
+    if (ImGui::IsKeyPressed(ImGuiKey_Escape)) cancelDialog();
     ImGui::EndPopup();
 }
 
@@ -581,7 +634,8 @@ void MainWindow::draw()
     if (ImGui::Button("Export")) openFiles(true);
     ImGui::EndDisabled();
     ImGui::SameLine();
-    if (ImGui::Button("Backups...")) openBackups();
+    const auto backupsLabel = "Backups (" + std::to_string(backupCount_) + ")";
+    if (ImGui::Button(backupsLabel.c_str())) openBackups();
 
     const auto buttonWidth = [&](const char* label) { return ImGui::CalcTextSize(label).x + style.FramePadding.x * 2; };
     const float rightWidth = buttonWidth("Restore defaults") + buttonWidth("Discard changes") + buttonWidth("Apply to keyboard") + 2 * style.ItemSpacing.x;

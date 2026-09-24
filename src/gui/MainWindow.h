@@ -40,6 +40,7 @@ private:
     void perform(Action action);
     void openFiles(bool save);
     void openBackups(bool manage = false);
+    void refreshBackupCount();
     void openApply();
     void drawBackups();
     void drawBackupList();
@@ -51,6 +52,7 @@ private:
     void drawFiles();
     void saveFile(bool overwrite);
     void finishDialog();
+    void cancelDialog();
     [[nodiscard]] bool unsaved() const;
 
     hhkbs::keymap::Keymap keymap_;
@@ -60,6 +62,7 @@ private:
     std::optional<hhkbs::keymap::BackupEntry> pendingBackup_;
     bool pendingBackupApply_ = false;
     bool selectManageTab_ = false;
+    std::size_t backupCount_ = 0;
     int keepBackups_ = 5;
     std::future<ScanResult> scan_;
     std::future<ApplyResult> apply_;
