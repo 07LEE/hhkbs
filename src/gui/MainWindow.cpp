@@ -204,12 +204,12 @@ void MainWindow::openApply()
     dialogError_.clear();
     dialog_ = Dialog::Apply;
 }
-void MainWindow::openBackups()
+void MainWindow::openBackups(Dialog mode)
 {
     backups_ = hhkbs::keymap::listBackups(hhkbs::keymap::backupDirectory());
     backupChoice_.reset();
     dialogError_.clear();
-    dialog_ = Dialog::Backups;
+    dialog_ = mode;
 }
 bool MainWindow::loadBackup(const hhkbs::keymap::BackupEntry& entry)
 {
@@ -227,11 +227,14 @@ bool MainWindow::loadBackup(const hhkbs::keymap::BackupEntry& entry)
     } catch (const std::exception& error) { dialogError_ = error.what(); }
     return false;
 }
-void MainWindow::drawBackups()
+void MainWindow::drawBackups(bool manage)
 {
-    ImGui::TextUnformatted("Restore from backup");
-    ImGui::TextWrapped("A backup is saved before every apply. Choose one, then load it into the editor for the profile it came from "
-                       "or restore it to the keyboard right away.");
+    ImGui::TextUnformatted(manage ? "Manage backups" : "Restore from backup");
+    if (manage)
+        ImGui::TextWrapped("A backup is saved before every apply. Delete the ones you no longer need; HHKBS never deletes them on its own.");
+    else
+        ImGui::TextWrapped("A backup is saved before every apply. Choose one, then load it into the editor for the profile it came from "
+                           "or restore it to the keyboard right away.");
     ImGui::TextDisabled("%s", hhkbs::keymap::backupDirectory().c_str());
     ImGui::BeginChild("Backups", ImVec2(0, 250), ImGuiChildFlags_Borders);
     if (backups_.empty()) ImGui::TextWrapped("No backups yet.");
@@ -243,18 +246,22 @@ void MainWindow::drawBackups()
         ImGui::PopID();
     }
     ImGui::EndChild();
+    if (manage) {
+        ImGui::BeginDisabled(!backupChoice_);
+        if (ImGui::Button("Delete")) dialog_ = Dialog::DeleteBackup;
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        ImGui::BeginDisabled(backups_.empty());
+        if (ImGui::Button("Clean up...")) dialog_ = Dialog::CleanBackups;
+        ImGui::EndDisabled();
+        return;
+    }
     ImGui::BeginDisabled(!backupChoice_);
     if (ImGui::Button("Load into editor")) static_cast<void>(loadBackup(backups_[*backupChoice_]));
     ImGui::SameLine();
     ImGui::BeginDisabled(demo_);
     if (ImGui::Button("Restore and apply") && loadBackup(backups_[*backupChoice_])) openApply();
     ImGui::EndDisabled();
-    ImGui::SameLine();
-    if (ImGui::Button("Delete")) dialog_ = Dialog::DeleteBackup;
-    ImGui::EndDisabled();
-    ImGui::SameLine();
-    ImGui::BeginDisabled(backups_.empty());
-    if (ImGui::Button("Clean up...")) dialog_ = Dialog::CleanBackups;
     ImGui::EndDisabled();
 }
 void MainWindow::drawCleanBackups()
@@ -276,13 +283,13 @@ void MainWindow::drawCleanBackups()
                 ++deleted;
             } catch (const std::exception& error) { if (firstError.empty()) firstError = error.what(); }
         }
-        openBackups();
+        openBackups(Dialog::ManageBackups);
         message_ = std::to_string(deleted) + " backup(s) deleted";
         dialogError_ = firstError;
     }
     ImGui::EndDisabled();
     ImGui::SameLine();
-    if (ImGui::Button("Back")) dialog_ = Dialog::Backups;
+    if (ImGui::Button("Back")) dialog_ = Dialog::ManageBackups;
 }
 void MainWindow::drawDeleteBackup()
 {
@@ -292,11 +299,11 @@ void MainWindow::drawDeleteBackup()
     if (ImGui::Button("Delete backup")) {
         try {
             hhkbs::keymap::deleteBackup(hhkbs::keymap::backupDirectory(), entry);
-            openBackups();
+            openBackups(Dialog::ManageBackups);
         } catch (const std::exception& error) { dialogError_ = error.what(); }
     }
     ImGui::SameLine();
-    if (ImGui::Button("Back")) dialog_ = Dialog::Backups;
+    if (ImGui::Button("Back")) dialog_ = Dialog::ManageBackups;
 }
 void MainWindow::finishDialog()
 {
@@ -410,7 +417,8 @@ void MainWindow::drawDialog()
             perform(action);
         }
     } else if (dialog_ == Dialog::Import || dialog_ == Dialog::Export) drawFiles();
-    else if (dialog_ == Dialog::Backups) drawBackups();
+    else if (dialog_ == Dialog::Backups) drawBackups(false);
+    else if (dialog_ == Dialog::ManageBackups) drawBackups(true);
     else if (dialog_ == Dialog::DeleteBackup) drawDeleteBackup();
     else if (dialog_ == Dialog::CleanBackups) drawCleanBackups();
     else if (dialog_ == Dialog::Overwrite) {
@@ -539,6 +547,8 @@ void MainWindow::draw()
     if (ImGui::Button("Import")) request(Action::Import);
     ImGui::SameLine();
     if (ImGui::Button("Restore from backup")) request(Action::Restore);
+    ImGui::SameLine();
+    if (ImGui::Button("Manage backups")) openBackups(Dialog::ManageBackups);
     ImGui::SameLine();
     ImGui::BeginDisabled(!loaded_);
     if (ImGui::Button("Export")) openFiles(true);
