@@ -20,6 +20,9 @@ public:
     HidrawTransport& operator=(HidrawTransport&&) = delete;
 
     [[nodiscard]] Report exchange(const Report& request) override;
+    [[nodiscard]] std::vector<Report> exchange(
+        const Report& request,
+        std::size_t responseCount) override;
 
 private:
     void waitFor(short events) const;

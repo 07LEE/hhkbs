@@ -10,10 +10,21 @@ Release builds will be available on [GitHub Releases](https://github.com/07LEE/h
 
 ## Usage
 
-1. Connect the HHKB Studio over USB and open HHKBS.
-2. Select Base, Fn1, Fn2, or Fn3.
-3. Select a key, mouse button, or gesture-pad direction and assign a function.
-4. Export the edited profile as TOML.
+1. Connect the HHKB Studio over USB and open HHKBS. The profile the keyboard is using is loaded.
+2. Choose Profile 1 to 4 to edit another profile.
+3. Select Base, Fn1, Fn2, or Fn3.
+4. Select a key, mouse button, or gesture-pad direction and assign a function.
+5. Choose Apply to keyboard to write the profile, or Export to save it as TOML.
+
+Read from keyboard reloads the profile the keyboard is currently using, for example after you switch profiles on the keyboard itself.
+
+## Applying to the keyboard
+
+Apply to keyboard overwrites the selected profile on the keyboard. HHKBS first saves the profile the keyboard currently holds as a TOML backup in `~/.local/state/hhkbs/backups/` (or under `$XDG_STATE_HOME/hhkbs/backups/`), writes the new profile, and reads it back to check it. If the check fails, HHKBS tries to restore the backup. The keyboard returns to the profile it was using before, and the backup can be loaded with Import.
+
+Do not unplug the keyboard while it is being written. HHKBS is unofficial, so keep your own backup of profiles you care about.
+
+Restore defaults puts the built-in default keymap in the editor. It does not change the keyboard until you apply it.
 
 ## Device permissions
 

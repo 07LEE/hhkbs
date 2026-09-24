@@ -6,17 +6,24 @@
 #include <string>
 
 std::optional<std::size_t> drawKeyboard(const hhkbs::keymap::Keymap& keymap,
-                                      std::size_t layer, float height)
+                                      std::size_t layer, float height,
+                                      const std::string& caption)
 {
     std::optional<std::size_t> activated;
     ImGui::BeginChild("Keyboard", ImVec2(0, height), ImGuiChildFlags_Borders,
                       ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
-    const auto available = ImGui::GetContentRegionAvail();
-    const float unit = std::max(1.0f, std::min(available.x / 17.8f, available.y / 6.1f));
+    auto available = ImGui::GetContentRegionAvail();
     const auto start = ImGui::GetCursorScreenPos();
-    const ImVec2 origin(start.x + (available.x - unit * 17.8f) / 2,
-                        start.y + (available.y - unit * 6.1f) / 2);
     auto* draw = ImGui::GetWindowDrawList();
+    // Keep the caption clear of the keys by laying the keyboard out below it.
+    const float captionHeight = caption.empty() ? 0.f : ImGui::GetTextLineHeight() + 8.f;
+    if (captionHeight > 0.f) {
+        draw->AddText(ImVec2(start.x + 2, start.y + 2), ImGui::GetColorU32(ImGuiCol_TextDisabled), caption.c_str());
+        available.y = std::max(1.f, available.y - captionHeight);
+    }
+    const float unit = std::max(1.0f, std::min(available.x / 17.8f, available.y / 6.1f));
+    const ImVec2 origin(start.x + (available.x - unit * 17.8f) / 2,
+                        start.y + captionHeight + (available.y - unit * 6.1f) / 2);
     const auto key = [&](const hhkbs::keymap::KeyPosition& pos, bool gesture) {
         const ImVec2 top(origin.x + pos.x * unit + 3, origin.y + pos.y * unit + 3);
         const ImVec2 size(pos.width * unit - 6, unit * .82f - 3);

@@ -1,9 +1,11 @@
 #include "device/DeviceDiscovery.h"
+#include "device/DeviceError.h"
 #include "device/HhkbProtocol.h"
 #include "device/HhkbStudioDevice.h"
 #include "device/Transport.h"
 #include "keymap/Keymap.h"
 
+#include <array>
 #include <cstdint>
 #include <exception>
 #include <filesystem>
@@ -95,6 +97,336 @@ public:
 
     std::vector<Report> requests;
 };
+
+// Behaves like a keyboard that stores its profile, so writes can be read back.
+class StorageTransport final : public Transport {
+public:
+    // Each profile holds its own data; `memory` is the active one.
+    StorageTransport()
+        : memory(Keymap::profileByteCount)
+    {
+        for (std::size_t profile = 0; profile < stored.size(); ++profile) {
+            stored[profile].assign(Keymap::profileByteCount, 0);
+            for (std::size_t index = 0; index < Keymap::profileByteCount; ++index) {
+                stored[profile][index] =
+                    static_cast<std::uint8_t>(index * 7U + profile * 31U);
+            }
+        }
+        memory = stored.at(currentProfile);
+    }
+
+    using Transport::exchange;
+
+    // Mirrors the keyboard: a profile switch is answered by two reports.
+    [[nodiscard]] std::vector<Report> exchange(
+        const Report& request,
+        const std::size_t responseCount) override
+    {
+        if (request[0] != 0x03) {
+            return Transport::exchange(request, responseCount);
+        }
+        ++switches;
+        const std::uint8_t requested = request[4];
+        const bool ignored = ignoreSwitch
+            || (ignoreSwitchNumber != 0 && switches == ignoreSwitchNumber);
+        if (!ignored) {
+            stored.at(currentProfile) = memory;
+            currentProfile = requested;
+            memory = stored.at(currentProfile);
+        }
+        Report notification{};
+        notification[0] = 0x02;
+        notification[1] = 0x11;
+        notification[2] = 0x01;
+        notification[4] = ignored ? currentProfile : requested;
+        notification[7] = 0x20;
+        Report acknowledgement = notification;
+        acknowledgement[0] = 0x03;
+        acknowledgement[7] = 0;
+        std::vector<Report> responses{notification, acknowledgement};
+        responses.resize(switchResponseCount, acknowledgement);
+        return responses;
+    }
+
+    [[nodiscard]] Report exchange(const Report& request) override
+    {
+        Report response{};
+        const auto address = static_cast<std::size_t>(
+            (static_cast<std::uint16_t>(request[1]) << 8U) | request[2]);
+
+        if (request[0] == 0x12) {
+            for (std::size_t index = 0; index < request[3]; ++index) {
+                response[4 + index] = memory.at(address + index);
+            }
+        } else if (request[0] == 0x13) {
+            ++writes;
+            if (failWriteNumber != 0 && writes == failWriteNumber) {
+                throw hhkbs::device::DeviceError(
+                    hhkbs::device::DeviceErrorCode::Disconnected,
+                    "unplugged");
+            }
+            for (std::size_t index = 0; index < request[3]; ++index) {
+                const auto value = request[4 + index];
+                memory.at(address + index) =
+                    corruptWrites ? static_cast<std::uint8_t>(~value) : value;
+            }
+        } else if (address == 0x1001) {
+            writeText(response, productName);
+        } else if (address == 0x1101) {
+            response[4] = currentProfile;
+        }
+        return response;
+    }
+
+    std::vector<std::uint8_t> memory;
+    std::array<std::vector<std::uint8_t>, 4> stored;
+    std::string productName = "HHKB-Studio";
+    std::uint8_t currentProfile = 2;
+    std::size_t writes = 0;
+    std::size_t switches = 0;
+    std::size_t switchResponseCount = 2;
+    bool ignoreSwitch = false;
+    std::size_t ignoreSwitchNumber = 0;
+    std::size_t failWriteNumber = 0;
+    bool corruptWrites = false;
+};
+
+std::vector<std::uint8_t> patternProfile(const std::uint8_t seed)
+{
+    std::vector<std::uint8_t> profile(Keymap::profileByteCount);
+    for (std::size_t index = 0; index < profile.size(); ++index) {
+        profile[index] = static_cast<std::uint8_t>(index + seed);
+    }
+    return profile;
+}
+
+void profileWriteIsVerifiedByReadBack()
+{
+    StorageTransport transport;
+    HhkbStudioDevice device(transport);
+    const auto backup = device.readCurrentProfile();
+    const auto profile = patternProfile(3);
+
+    device.requireTarget(2);
+    device.writeCurrentProfile(profile, backup);
+
+    require(transport.memory == profile, "profile was not stored on the device");
+    constexpr std::size_t expectedWrites = (Keymap::profileByteCount + 25) / 26;
+    require(transport.writes == expectedWrites, "profile used unexpected write chunks");
+}
+
+void failedWriteRestoresBackup()
+{
+    StorageTransport transport;
+    HhkbStudioDevice device(transport);
+    const auto backup = device.readCurrentProfile();
+
+    transport.failWriteNumber = 5;
+    bool threw = false;
+    try {
+        device.writeCurrentProfile(patternProfile(3), backup);
+    } catch (const hhkbs::device::DeviceError&) {
+        threw = true;
+    }
+
+    require(threw, "an interrupted write was not reported");
+    require(transport.memory == backup, "backup was not restored after a failed write");
+}
+
+void mismatchedReadBackRestoresBackup()
+{
+    StorageTransport transport;
+    HhkbStudioDevice device(transport);
+    const auto backup = device.readCurrentProfile();
+
+    transport.corruptWrites = true;
+    bool threw = false;
+    try {
+        device.writeCurrentProfile(patternProfile(3), backup);
+    } catch (const hhkbs::device::DeviceError& error) {
+        threw = error.code() == hhkbs::device::DeviceErrorCode::Protocol;
+    }
+
+    require(threw, "a read-back mismatch was not reported");
+}
+
+void writeTargetIsChecked()
+{
+    StorageTransport wrongProfile;
+    HhkbStudioDevice device(wrongProfile);
+    bool threw = false;
+    try {
+        device.requireTarget(1);
+    } catch (const hhkbs::device::DeviceError&) {
+        threw = true;
+    }
+    require(threw, "a changed active profile was not rejected");
+
+    StorageTransport wrongDevice;
+    wrongDevice.productName = "Other";
+    HhkbStudioDevice other(wrongDevice);
+    threw = false;
+    try {
+        other.requireTarget(2);
+    } catch (const hhkbs::device::DeviceError&) {
+        threw = true;
+    }
+    require(threw, "a non-HHKB device was not rejected");
+
+    StorageTransport shortProfile;
+    HhkbStudioDevice shortDevice(shortProfile);
+    threw = false;
+    try {
+        shortDevice.writeCurrentProfile({1, 2, 3}, patternProfile(0));
+    } catch (const hhkbs::device::DeviceError&) {
+        threw = true;
+    }
+    require(threw, "a short profile was accepted");
+    require(shortProfile.writes == 0, "a rejected profile was still sent");
+}
+
+void profileSwitchIsConfirmed()
+{
+    StorageTransport transport;
+    HhkbStudioDevice device(transport);
+
+    device.switchProfile(3);
+
+    require(transport.switches == 1, "profile switch was not sent once");
+    require(transport.currentProfile == 3, "profile switch did not take effect");
+    device.requireTarget(3);
+}
+
+void invalidProfileSwitchIsRejectedBeforeSending()
+{
+    StorageTransport transport;
+    HhkbStudioDevice device(transport);
+
+    bool threw = false;
+    try {
+        device.switchProfile(4);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+
+    require(threw, "an out-of-range profile was accepted");
+    require(transport.switches == 0, "an invalid profile switch was still sent");
+}
+
+void unconfirmedProfileSwitchIsReported()
+{
+    StorageTransport ignored;
+    ignored.ignoreSwitch = true;
+    HhkbStudioDevice device(ignored);
+    bool threw = false;
+    try {
+        device.switchProfile(0);
+    } catch (const hhkbs::device::DeviceError& error) {
+        threw = error.code() == hhkbs::device::DeviceErrorCode::Protocol;
+    }
+    require(threw, "a switch the keyboard ignored was not reported");
+
+    StorageTransport shortAnswer;
+    shortAnswer.switchResponseCount = 1;
+    HhkbStudioDevice shortDevice(shortAnswer);
+    threw = false;
+    try {
+        shortDevice.switchProfile(0);
+    } catch (const hhkbs::device::DeviceError&) {
+        threw = true;
+    }
+    require(threw, "a missing switch response was not reported");
+}
+
+void otherProfileIsReadAndActiveProfileIsKept()
+{
+    StorageTransport transport;
+    const auto activeData = transport.memory;
+    const auto otherData = transport.stored.at(0);
+    HhkbStudioDevice device(transport);
+
+    const auto profile = device.readProfile(0);
+
+    require(profile == otherData, "the requested profile was not read");
+    require(device.activeProfile() == 2, "the active profile was not restored");
+    require(transport.memory == activeData, "the active profile data changed");
+    require(transport.switches == 2, "reading another profile should switch out and back");
+
+    const auto before = transport.switches;
+    require(device.readProfile(2) == activeData, "the active profile was not read directly");
+    require(transport.switches == before, "reading the active profile should not switch");
+}
+
+void writeToOtherProfileKeepsActiveProfile()
+{
+    StorageTransport transport;
+    const auto activeData = transport.memory;
+    HhkbStudioDevice device(transport);
+    const auto profile = patternProfile(9);
+
+    device.runOnProfile(3, [&] {
+        device.requireTarget(3);
+        device.writeCurrentProfile(profile, device.readCurrentProfile());
+    });
+
+    require(device.activeProfile() == 2, "the active profile was not restored after writing");
+    require(transport.memory == activeData, "the active profile was modified");
+    require(transport.stored.at(3) == profile, "the target profile did not receive the data");
+}
+
+void failedActionStillRestoresActiveProfile()
+{
+    StorageTransport transport;
+    HhkbStudioDevice device(transport);
+
+    bool threw = false;
+    try {
+        device.runOnProfile(1, [] { throw std::runtime_error("boom"); });
+    } catch (const std::runtime_error& error) {
+        threw = std::string(error.what()) == "boom";
+    }
+
+    require(threw, "the action's own error was not propagated");
+    require(device.activeProfile() == 2, "the active profile was not restored after an error");
+}
+
+void unreturnableProfileIsReported()
+{
+    StorageTransport transport;
+    transport.ignoreSwitchNumber = 2;
+    HhkbStudioDevice device(transport);
+
+    bool threw = false;
+    try {
+        device.runOnProfile(1, [] {});
+    } catch (const hhkbs::device::DeviceError& error) {
+        threw = std::string(error.what()).find("could not be returned to profile 3")
+            != std::string::npos;
+    }
+
+    require(threw, "a keyboard left on another profile was not reported");
+}
+
+void profileSwitchPacketIsEncoded()
+{
+    const auto request = hhkbs::device::protocol::encodeProfileSwitchRequest(2);
+    require(
+        request[0] == 0x03 && request[1] == 0x11 && request[2] == 0x01
+            && request[3] == 0x00 && request[4] == 0x02 && request[5] == 0,
+        "profile switch request was encoded incorrectly");
+}
+
+void writePacketIsEncoded()
+{
+    const auto request = hhkbs::device::protocol::encodeDataWriteRequest(
+        0x0102,
+        {0xAA, 0xBB, 0xCC});
+    require(
+        request[0] == 0x13 && request[1] == 0x01 && request[2] == 0x02
+            && request[3] == 3 && request[4] == 0xAA && request[6] == 0xCC
+            && request[7] == 0,
+        "write request was encoded incorrectly");
+}
 
 void informationCommandsAreDecoded()
 {
@@ -213,6 +545,19 @@ int main()
         protocolPacketsAreEncodedAndDecoded();
         profileIsReadInBoundedChunks();
         supportedInterfacesAreDiscovered();
+        writePacketIsEncoded();
+        profileWriteIsVerifiedByReadBack();
+        failedWriteRestoresBackup();
+        mismatchedReadBackRestoresBackup();
+        writeTargetIsChecked();
+        profileSwitchPacketIsEncoded();
+        profileSwitchIsConfirmed();
+        invalidProfileSwitchIsRejectedBeforeSending();
+        unconfirmedProfileSwitchIsReported();
+        otherProfileIsReadAndActiveProfileIsKept();
+        writeToOtherProfileKeepsActiveProfile();
+        failedActionStillRestoresActiveProfile();
+        unreturnableProfileIsReported();
     } catch (const std::exception& error) {
         std::cerr << "HHKB device test failed: " << error.what() << '\n';
         return 1;

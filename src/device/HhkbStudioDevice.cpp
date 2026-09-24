@@ -4,7 +4,9 @@
 #include "keymap/Keymap.h"
 
 #include <algorithm>
+#include <exception>
 #include <limits>
+#include <stdexcept>
 
 namespace hhkbs::device {
 
@@ -37,9 +39,7 @@ KeyboardInformation HhkbStudioDevice::readInformation()
         readProperty(protocol::Property::DipSwitches),
         protocol::textPayloadOffset,
         6);
-    information.currentProfile = protocol::decodeBigEndian16(
-        readProperty(protocol::Property::CurrentProfile),
-        protocol::textPayloadOffset);
+    information.currentProfile = activeProfile();
     return information;
 }
 
@@ -50,6 +50,174 @@ std::vector<std::uint8_t> HhkbStudioDevice::readCurrentProfile()
     return readData(
         0,
         static_cast<std::uint16_t>(keymap::Keymap::profileByteCount));
+}
+
+std::uint16_t HhkbStudioDevice::activeProfile()
+{
+    return protocol::decodeBigEndian16(
+        readProperty(protocol::Property::CurrentProfile),
+        protocol::textPayloadOffset);
+}
+
+std::vector<std::uint8_t> HhkbStudioDevice::readProfile(const std::uint16_t profile)
+{
+    std::vector<std::uint8_t> data;
+    runOnProfile(profile, [&] { data = readCurrentProfile(); });
+    return data;
+}
+
+void HhkbStudioDevice::runOnProfile(
+    const std::uint16_t profile,
+    const std::function<void()>& action)
+{
+    if (profile >= protocol::profileCount) {
+        throw std::invalid_argument("HHKB profile number must be between 0 and 3");
+    }
+
+    const auto original = activeProfile();
+    if (original == profile) {
+        action();
+        return;
+    }
+
+    const auto returnNote = [original](const std::string& reason) {
+        return reason + " The keyboard could not be returned to profile "
+            + std::to_string(original + 1) + ".";
+    };
+
+    try {
+        switchProfile(profile);
+        action();
+    } catch (const std::exception& error) {
+        if (tryActivate(original)) {
+            throw;
+        }
+        throw DeviceError(DeviceErrorCode::InputOutput, returnNote(error.what()));
+    }
+
+    try {
+        switchProfile(original);
+    } catch (const std::exception& error) {
+        throw DeviceError(DeviceErrorCode::InputOutput, returnNote(error.what()));
+    }
+}
+
+bool HhkbStudioDevice::tryActivate(const std::uint16_t profile)
+{
+    try {
+        if (activeProfile() != profile) {
+            switchProfile(profile);
+        }
+        return true;
+    } catch (const std::exception&) {
+        return false;
+    }
+}
+
+void HhkbStudioDevice::switchProfile(const std::uint16_t profile)
+{
+    const auto responses = transport_.exchange(
+        protocol::encodeProfileSwitchRequest(profile),
+        protocol::profileSwitchResponseCount);
+    if (responses.size() != protocol::profileSwitchResponseCount) {
+        throw DeviceError(
+            DeviceErrorCode::Protocol,
+            "HHKB Studio answered a profile switch with an unexpected number of reports");
+    }
+    for (const auto& response : responses) {
+        if (protocol::decodeBigEndian16(response, protocol::textPayloadOffset) != profile) {
+            throw DeviceError(
+                DeviceErrorCode::Protocol,
+                "HHKB Studio did not confirm the requested profile");
+        }
+    }
+
+    if (activeProfile() != profile) {
+        throw DeviceError(
+            DeviceErrorCode::Protocol,
+            "HHKB Studio is not on the requested profile after switching");
+    }
+}
+
+void HhkbStudioDevice::requireTarget(const std::uint16_t expectedProfile)
+{
+    if (readProductName() != "HHKB-Studio") {
+        throw DeviceError(
+            DeviceErrorCode::Protocol,
+            "The connected device is not an HHKB Studio");
+    }
+    if (activeProfile() != expectedProfile) {
+        throw DeviceError(
+            DeviceErrorCode::Protocol,
+            "The keyboard's active profile changed since it was read. "
+            "Read from the keyboard again before applying.");
+    }
+}
+
+void HhkbStudioDevice::writeCurrentProfile(
+    const std::vector<std::uint8_t>& profile,
+    const std::vector<std::uint8_t>& backup)
+{
+    if (profile.size() != keymap::Keymap::profileByteCount
+        || backup.size() != keymap::Keymap::profileByteCount) {
+        throw DeviceError(
+            DeviceErrorCode::Protocol,
+            "Profile data has an unexpected length");
+    }
+
+    try {
+        writeData(0, profile);
+    } catch (const std::exception& error) {
+        const bool restored = tryRestore(backup);
+        throw DeviceError(
+            DeviceErrorCode::InputOutput,
+            std::string("Writing the profile failed: ") + error.what()
+                + (restored
+                       ? " The previous profile was restored."
+                       : " The previous profile could not be restored; "
+                         "apply the saved backup to recover."));
+    }
+
+    if (readCurrentProfile() != profile) {
+        const bool restored = tryRestore(backup);
+        throw DeviceError(
+            DeviceErrorCode::Protocol,
+            std::string("The keyboard did not keep the written profile. ")
+                + (restored
+                       ? "The previous profile was restored."
+                       : "The previous profile could not be restored; "
+                         "apply the saved backup to recover."));
+    }
+}
+
+bool HhkbStudioDevice::tryRestore(const std::vector<std::uint8_t>& backup)
+{
+    try {
+        writeData(0, backup);
+        return readCurrentProfile() == backup;
+    } catch (const std::exception&) {
+        return false;
+    }
+}
+
+void HhkbStudioDevice::writeData(
+    const std::uint16_t start,
+    const std::vector<std::uint8_t>& data)
+{
+    for (std::size_t offset = 0; offset < data.size();
+         offset += protocol::maximumDataPayload) {
+        const auto count = std::min<std::size_t>(
+            protocol::maximumDataPayload,
+            data.size() - offset);
+        const std::vector<std::uint8_t> chunk(
+            data.begin() + static_cast<std::ptrdiff_t>(offset),
+            data.begin() + static_cast<std::ptrdiff_t>(offset + count));
+        // The response layout is not documented, so success is judged by the
+        // read-back comparison rather than by the acknowledgement.
+        static_cast<void>(transport_.exchange(protocol::encodeDataWriteRequest(
+            static_cast<std::uint16_t>(start + offset),
+            chunk)));
+    }
 }
 
 Report HhkbStudioDevice::readProperty(const protocol::Property property)
