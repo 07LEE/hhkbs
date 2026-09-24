@@ -49,5 +49,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # GitHub's generated notes without the New Contributors section and the "by @author" on each line.
+          # An @mention anywhere in the notes makes GitHub add a Contributors avatar row, so none may remain.
+          gh api -X POST "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
+            -f tag_name="$GITHUB_REF_NAME" --jq .body \
+            | sed -e '/^## New Contributors$/,/^\*\*Full Changelog\*\*/{/^\*\*Full Changelog\*\*/!d}' \
+                  -e 's/ by @[^ ]* in / in /' > notes.md
           gh release create "$GITHUB_REF_NAME" "hhkbs-${GITHUB_REF_NAME}-linux-x86_64.tar.gz" \
-            --verify-tag --title "$GITHUB_REF_NAME" --generate-notes
+            --verify-tag --title "$GITHUB_REF_NAME" --notes-file notes.md
