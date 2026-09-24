@@ -27,6 +27,12 @@ sudo udevadm trigger
 
 Apply saves the profile currently on the keyboard to `~/.local/state/hhkbs/backups/` before writing. Backups lists them so one can be restored. Do not unplug the keyboard while it is being written.
 
+## Disclaimer
+
+HHKBS is an unofficial project. It is not affiliated with or endorsed by PFU Limited, and HHKB and Happy Hacking Keyboard are trademarks of PFU Limited.
+
+HHKBS writes to your keyboard. Use it at your own risk: the authors are not responsible for lost settings, a misbehaving keyboard, or any other damage caused by using it.
+
 ## License
 
 [MIT](LICENSE). [Third-party licenses](third_party/README.md).

@@ -2,9 +2,10 @@ name: CI
 
 on:
   push:
+    branches: [master]
   pull_request:
 
-# A push to a branch with an open pull request triggers two runs; keep only the latest.
+# A newer push to the same branch cancels the run that is still in progress.
 concurrency:
   group: ci-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
