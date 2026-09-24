@@ -17,7 +17,7 @@ public:
     [[nodiscard]] bool shouldClose() const { return close_; }
 private:
     enum class Action { None, Read, SwitchProfile, Import, Restore, Close };
-    enum class Dialog { None, Assign, Unsaved, Import, Export, Overwrite, Defaults, Apply, Backups, DeleteBackup };
+    enum class Dialog { None, Assign, Unsaved, Import, Export, Overwrite, Defaults, Apply, Backups, DeleteBackup, CleanBackups };
     struct ScanResult {
         std::string status;
         std::string detail;
@@ -42,6 +42,7 @@ private:
     void openBackups();
     void drawBackups();
     void drawDeleteBackup();
+    void drawCleanBackups();
     [[nodiscard]] bool loadBackup(const hhkbs::keymap::BackupEntry& entry);
     void drawDialog();
     void drawFiles();
@@ -53,6 +54,7 @@ private:
     std::vector<std::uint8_t> savedBytes_;
     std::vector<hhkbs::keymap::BackupEntry> backups_;
     std::optional<std::size_t> backupChoice_;
+    int keepBackups_ = 5;
     std::future<ScanResult> scan_;
     std::future<ApplyResult> apply_;
     // The keyboard profile shown in the editor; only set once it has been read or applied.

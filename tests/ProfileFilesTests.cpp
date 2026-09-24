@@ -72,6 +72,15 @@ int main() {
         const auto remaining = listBackups(backups);
         if (remaining.size() != 2 || std::filesystem::exists(listed[1].path))
             throw std::runtime_error("The chosen backup was not deleted alone");
+        const auto entry = [](std::uint16_t profile, const char* stamp) {
+            return BackupEntry{"backup-" + std::string(stamp) + ".toml", profile, stamp};
+        };
+        const std::vector<BackupEntry> ordered{entry(0, "5"), entry(3, "5"), entry(0, "4"), entry(0, "3"), entry(3, "3"), entry(0, "2")};
+        const auto surplus = backupsBeyondNewest(ordered, 2);
+        if (surplus.size() != 2 || surplus[0].timestamp != "3" || surplus[0].profile != 0 || surplus[1].timestamp != "2")
+            throw std::runtime_error("Cleanup should drop only the oldest backups of each profile");
+        if (!backupsBeyondNewest(ordered, 4).empty()) throw std::runtime_error("Nothing should go when everything fits");
+        if (backupsBeyondNewest(ordered, 0).size() != ordered.size()) throw std::runtime_error("Keeping none drops all");
         if (!listBackups(directory / "missing").empty()) throw std::runtime_error("Missing folder should list nothing");
         if (backupFileName(0, 0).find("-profile1.toml") == std::string::npos)
             throw std::runtime_error("Backup file names use the 1-based profile number");

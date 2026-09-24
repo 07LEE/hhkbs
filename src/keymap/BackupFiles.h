@@ -22,6 +22,10 @@ struct BackupEntry {
 // Backups in the directory, newest first. Files with any other name are ignored.
 [[nodiscard]] std::vector<BackupEntry> listBackups(const std::filesystem::path& directory);
 
+// Backups that fall outside the newest `keepPerProfile` of their own profile. Expects newest first.
+[[nodiscard]] std::vector<BackupEntry> backupsBeyondNewest(const std::vector<BackupEntry>& newestFirst,
+                                                            std::size_t keepPerProfile);
+
 // Deletes one backup. Refuses anything that is not a backup file directly inside `directory`.
 void deleteBackup(const std::filesystem::path& directory, const BackupEntry& entry);
 

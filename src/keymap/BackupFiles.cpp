@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <map>
 #include <optional>
 #include <stdexcept>
 #include <system_error>
@@ -62,6 +63,16 @@ std::vector<BackupEntry> listBackups(const std::filesystem::path& directory)
         return a.path.filename() > b.path.filename();
     });
     return entries;
+}
+
+std::vector<BackupEntry> backupsBeyondNewest(const std::vector<BackupEntry>& newestFirst,
+                                             const std::size_t keepPerProfile)
+{
+    std::map<std::uint16_t, std::size_t> seen;
+    std::vector<BackupEntry> surplus;
+    for (const auto& entry : newestFirst)
+        if (seen[entry.profile]++ >= keepPerProfile) surplus.push_back(entry);
+    return surplus;
 }
 
 void deleteBackup(const std::filesystem::path& directory, const BackupEntry& entry)

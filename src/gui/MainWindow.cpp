@@ -247,6 +247,37 @@ void MainWindow::drawBackups()
     ImGui::SameLine();
     if (ImGui::Button("Delete")) dialog_ = Dialog::DeleteBackup;
     ImGui::EndDisabled();
+    ImGui::SameLine();
+    ImGui::BeginDisabled(backups_.empty());
+    if (ImGui::Button("Clean up...")) dialog_ = Dialog::CleanBackups;
+    ImGui::EndDisabled();
+}
+void MainWindow::drawCleanBackups()
+{
+    ImGui::TextUnformatted("Clean up backups");
+    ImGui::TextWrapped("Keep the newest backups of each profile and delete the rest. This cannot be undone.");
+    ImGui::SetNextItemWidth(120);
+    ImGui::InputInt("newest backups to keep per profile", &keepBackups_);
+    keepBackups_ = std::clamp(keepBackups_, 1, 999);
+    const auto surplus = hhkbs::keymap::backupsBeyondNewest(backups_, static_cast<std::size_t>(keepBackups_));
+    ImGui::TextWrapped("%zu of %zu backups will be deleted.", surplus.size(), backups_.size());
+    ImGui::BeginDisabled(surplus.empty());
+    if (ImGui::Button("Delete backups")) {
+        std::size_t deleted = 0;
+        std::string firstError;
+        for (const auto& entry : surplus) {
+            try {
+                hhkbs::keymap::deleteBackup(hhkbs::keymap::backupDirectory(), entry);
+                ++deleted;
+            } catch (const std::exception& error) { if (firstError.empty()) firstError = error.what(); }
+        }
+        openBackups();
+        message_ = std::to_string(deleted) + " backup(s) deleted";
+        dialogError_ = firstError;
+    }
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    if (ImGui::Button("Back")) dialog_ = Dialog::Backups;
 }
 void MainWindow::drawDeleteBackup()
 {
@@ -375,6 +406,7 @@ void MainWindow::drawDialog()
     } else if (dialog_ == Dialog::Import || dialog_ == Dialog::Export) drawFiles();
     else if (dialog_ == Dialog::Backups) drawBackups();
     else if (dialog_ == Dialog::DeleteBackup) drawDeleteBackup();
+    else if (dialog_ == Dialog::CleanBackups) drawCleanBackups();
     else if (dialog_ == Dialog::Overwrite) {
         ImGui::TextWrapped("Replace the existing file?\n%s", path_.data());
         if (ImGui::Button("Replace file")) saveFile(true);
