@@ -671,6 +671,23 @@ void MainWindow::drawDialog()
 namespace {
 constexpr float kPi = 3.14159265f;
 
+// A circular arrow: a three-quarter arc with a head at its end.
+void drawRefreshIcon(ImDrawList* draw, ImVec2 min, ImVec2 max)
+{
+    const ImVec2 center((min.x + max.x) / 2, (min.y + max.y) / 2);
+    const float r = (max.x - min.x) * .24f;
+    const ImU32 color = ImGui::GetColorU32(ImGuiCol_Text);
+    const float start = -kPi * .35f, end = kPi * 1.35f;
+    draw->PathArcTo(center, r, start, end);
+    draw->PathStroke(color, 0, 1.8f);
+    const ImVec2 tip(center.x + std::cos(end) * r, center.y + std::sin(end) * r);
+    const ImVec2 along(-std::sin(end), std::cos(end)), across(std::cos(end), std::sin(end));
+    const float head = r * .75f;
+    draw->AddTriangleFilled(ImVec2(tip.x + along.x * head, tip.y + along.y * head),
+                            ImVec2(tip.x + across.x * head * .8f, tip.y + across.y * head * .8f),
+                            ImVec2(tip.x - across.x * head * .8f, tip.y - across.y * head * .8f), color);
+}
+
 // Auto = half-filled disc, Light = sun, Dark = crescent moon.
 void drawThemeIcon(ImDrawList* draw, ImVec2 min, ImVec2 max, theme::Mode mode)
 {
@@ -720,6 +737,14 @@ void MainWindow::draw()
     ImGui::SameLine();
     ImGui::SetCursorPosY(smallTop);
     ImGui::Text("  /  %s", status_.c_str());
+    // Re-reads the profile the keyboard is using; it replaces the editor content, so unsaved edits are confirmed first.
+    ImGui::SameLine(0, 8.f);
+    ImGui::SetCursorPosY(titleTop);
+    ImGui::BeginDisabled(busy);
+    if (ImGui::Button("##refresh", ImVec2(ImGui::GetFrameHeight(), ImGui::GetFrameHeight()))) request(Action::Read);
+    drawRefreshIcon(ImGui::GetWindowDrawList(), ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
+    ImGui::EndDisabled();
+    ImGui::SetItemTooltip("Read the profile the keyboard is currently using");
     // Cycles Auto (follow the desktop) -> Light -> Dark; the icon shows the current mode.
     const float themeSize = ImGui::GetFrameHeight();
     ImGui::SameLine(ImGui::GetWindowWidth() - ImGui::GetStyle().WindowPadding.x - themeSize);
@@ -783,9 +808,6 @@ void MainWindow::draw()
         ImGui::EndChild();
     }
     // Left: moving data in and out. Right: the editor and the one action that writes to the keyboard.
-    if (ImGui::Button("Read from keyboard")) request(Action::Read);
-    ImGui::SetItemTooltip("Read the profile the keyboard is currently using");
-    ImGui::SameLine();
     if (ImGui::Button("Import")) request(Action::Import);
     ImGui::SameLine();
     ImGui::BeginDisabled(!loaded_);

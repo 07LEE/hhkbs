@@ -75,7 +75,7 @@ int main(int argc, char* argv[])
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR,3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR,0);
     std::unique_ptr<GLFWwindow, decltype(&glfwDestroyWindow)> window(
-        glfwCreateWindow(1180,760,"HHKBS",nullptr,nullptr),glfwDestroyWindow);
+        glfwCreateWindow(1180,700,"HHKBS",nullptr,nullptr),glfwDestroyWindow);
     if (!window) return 1;
     glfwSetWindowSizeLimits(window.get(),940,620,GLFW_DONT_CARE,GLFW_DONT_CARE);
     glfwMakeContextCurrent(window.get());
