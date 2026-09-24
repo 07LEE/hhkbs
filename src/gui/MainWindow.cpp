@@ -200,7 +200,7 @@ void MainWindow::request(Action action)
 }
 void MainWindow::perform(Action action)
 {
-    if (action == Action::Read) beginScan(selectedProfile_);
+    if (action == Action::Read) beginScan();
     else if (action == Action::SwitchProfile) beginScan(requestedProfile_);
     else if (action == Action::Import) openFiles(false);
     else if (action == Action::Close) close_ = true;
@@ -371,15 +371,41 @@ void MainWindow::draw()
     ImGui::SetNextWindowSize(viewport->WorkSize);
     ImGui::Begin("HHKBS workspace", nullptr, ImGuiWindowFlags_NoDecoration |
                  ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings);
+    // Title, subtitle and status share one line, with the smaller text sitting on the title's baseline.
+    const float titleTop = ImGui::GetCursorPosY();
     ImGui::SetWindowFontScale(1.7f);
     ImGui::TextUnformatted("HHKBS");
     ImGui::SetWindowFontScale(1.f);
+    const float smallTop = titleTop + ImGui::GetItemRectSize().y - ImGui::GetTextLineHeight() - 3.f;
+    ImGui::SameLine(0, 16.f);
+    ImGui::SetCursorPosY(smallTop);
     ImGui::TextDisabled("HHKB Studio Keymap Editor for Linux");
     ImGui::SameLine();
+    ImGui::SetCursorPosY(smallTop);
     ImGui::Text("  /  %s", status_.c_str());
     ImGui::Spacing();
     ImGui::Separator();
     ImGui::Spacing();
+    ImGui::BeginDisabled(!loaded_ || busy);
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted("Layer");
+    const char* layers[] = {"Base", "Fn1", "Fn2", "Fn3"};
+    for (std::size_t i=0; i<4; ++i) {
+        ImGui::SameLine();
+        const bool selected = i == layer_;
+        if (selected) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(.69f,.80f,.97f,1));
+        if (ImGui::Button(layers[i], ImVec2(76,32))) layer_ = i;
+        if (selected) ImGui::PopStyleColor();
+    }
+    ImGui::EndDisabled();
+    // Profiles are right-aligned; wrap below the layers when the window is too narrow.
+    const float spacing = ImGui::GetStyle().ItemSpacing.x;
+    const float profilesWidth = ImGui::CalcTextSize("Keyboard profile").x + 4*(96 + spacing);
+    const float profilesX = ImGui::GetWindowWidth() - ImGui::GetStyle().WindowPadding.x - profilesWidth;
+    const float layersEnd = ImGui::GetItemRectMax().x - ImGui::GetWindowPos().x;
+    const bool sideBySide = profilesX >= layersEnd + 36.f;
+    if (sideBySide) ImGui::SameLine(profilesX);
+    else ImGui::Spacing();
     ImGui::BeginDisabled(demo_ || busy);
     ImGui::AlignTextToFramePadding();
     ImGui::TextUnformatted("Keyboard profile");
@@ -389,17 +415,6 @@ void MainWindow::draw()
         if (selected) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(.69f,.80f,.97f,1));
         const auto label = "Profile " + std::to_string(i+1);
         if (ImGui::Button(label.c_str(), ImVec2(96,32))) selectProfile(i);
-        if (selected) ImGui::PopStyleColor();
-    }
-    ImGui::EndDisabled();
-    ImGui::Spacing();
-    ImGui::BeginDisabled(!loaded_ || busy);
-    const char* layers[] = {"Base", "Fn1", "Fn2", "Fn3"};
-    for (std::size_t i=0; i<4; ++i) {
-        if (i) ImGui::SameLine();
-        const bool selected = i == layer_;
-        if (selected) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(.69f,.80f,.97f,1));
-        if (ImGui::Button(layers[i], ImVec2(76,32))) layer_ = i;
         if (selected) ImGui::PopStyleColor();
     }
     ImGui::EndDisabled();
@@ -418,6 +433,7 @@ void MainWindow::draw()
         ImGui::EndChild();
     }
     if (ImGui::Button("Read from keyboard")) request(Action::Read);
+    ImGui::SetItemTooltip("Read the profile the keyboard is currently using");
     ImGui::SameLine();
     if (ImGui::Button("Import")) request(Action::Import);
     ImGui::SameLine();
