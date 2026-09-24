@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <exception>
 #include <limits>
+#include <stdexcept>
 
 namespace hhkbs::device {
 
@@ -38,9 +39,7 @@ KeyboardInformation HhkbStudioDevice::readInformation()
         readProperty(protocol::Property::DipSwitches),
         protocol::textPayloadOffset,
         6);
-    information.currentProfile = protocol::decodeBigEndian16(
-        readProperty(protocol::Property::CurrentProfile),
-        protocol::textPayloadOffset);
+    information.currentProfile = activeProfile();
     return information;
 }
 
@@ -51,6 +50,68 @@ std::vector<std::uint8_t> HhkbStudioDevice::readCurrentProfile()
     return readData(
         0,
         static_cast<std::uint16_t>(keymap::Keymap::profileByteCount));
+}
+
+std::uint16_t HhkbStudioDevice::activeProfile()
+{
+    return protocol::decodeBigEndian16(
+        readProperty(protocol::Property::CurrentProfile),
+        protocol::textPayloadOffset);
+}
+
+std::vector<std::uint8_t> HhkbStudioDevice::readProfile(const std::uint16_t profile)
+{
+    std::vector<std::uint8_t> data;
+    runOnProfile(profile, [&] { data = readCurrentProfile(); });
+    return data;
+}
+
+void HhkbStudioDevice::runOnProfile(
+    const std::uint16_t profile,
+    const std::function<void()>& action)
+{
+    if (profile >= protocol::profileCount) {
+        throw std::invalid_argument("HHKB profile number must be between 0 and 3");
+    }
+
+    const auto original = activeProfile();
+    if (original == profile) {
+        action();
+        return;
+    }
+
+    const auto returnNote = [original](const std::string& reason) {
+        return reason + " The keyboard could not be returned to profile "
+            + std::to_string(original + 1) + ".";
+    };
+
+    try {
+        switchProfile(profile);
+        action();
+    } catch (const std::exception& error) {
+        if (tryActivate(original)) {
+            throw;
+        }
+        throw DeviceError(DeviceErrorCode::InputOutput, returnNote(error.what()));
+    }
+
+    try {
+        switchProfile(original);
+    } catch (const std::exception& error) {
+        throw DeviceError(DeviceErrorCode::InputOutput, returnNote(error.what()));
+    }
+}
+
+bool HhkbStudioDevice::tryActivate(const std::uint16_t profile)
+{
+    try {
+        if (activeProfile() != profile) {
+            switchProfile(profile);
+        }
+        return true;
+    } catch (const std::exception&) {
+        return false;
+    }
 }
 
 void HhkbStudioDevice::switchProfile(const std::uint16_t profile)
@@ -71,10 +132,7 @@ void HhkbStudioDevice::switchProfile(const std::uint16_t profile)
         }
     }
 
-    const auto active = protocol::decodeBigEndian16(
-        readProperty(protocol::Property::CurrentProfile),
-        protocol::textPayloadOffset);
-    if (active != profile) {
+    if (activeProfile() != profile) {
         throw DeviceError(
             DeviceErrorCode::Protocol,
             "HHKB Studio is not on the requested profile after switching");
@@ -88,10 +146,7 @@ void HhkbStudioDevice::requireTarget(const std::uint16_t expectedProfile)
             DeviceErrorCode::Protocol,
             "The connected device is not an HHKB Studio");
     }
-    const auto current = protocol::decodeBigEndian16(
-        readProperty(protocol::Property::CurrentProfile),
-        protocol::textPayloadOffset);
-    if (current != expectedProfile) {
+    if (activeProfile() != expectedProfile) {
         throw DeviceError(
             DeviceErrorCode::Protocol,
             "The keyboard's active profile changed since it was read. "

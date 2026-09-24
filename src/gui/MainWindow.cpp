@@ -65,12 +65,12 @@ MainWindow::MainWindow(bool demoMode)
 
 bool MainWindow::unsaved() const { return loaded_ && keymap_.toBytes() != savedBytes_; }
 
-void MainWindow::beginScan()
+void MainWindow::beginScan(std::optional<std::uint16_t> target)
 {
     if (scan_.valid()) return;
     status_ = "Searching...";
     message_ = "Checking available HID interfaces...";
-    scan_ = std::async(std::launch::async, [] {
+    scan_ = std::async(std::launch::async, [target] {
         ScanResult result{"No device", "Connect an HHKB Studio, import a TOML profile, or start with --demo.", {}, std::nullopt};
         try {
             const auto devices = hhkbs::device::DeviceDiscovery::findHhkbStudioInterfaces();
@@ -83,11 +83,14 @@ void MainWindow::beginScan()
                     hhkbs::device::HhkbStudioDevice device(transport);
                     if (device.readProductName() != "HHKB-Studio") continue;
                     const auto info = device.readInformation();
-                    result.bytes = device.readCurrentProfile();
-                    result.profile = info.currentProfile;
+                    const auto profile = target.value_or(info.currentProfile);
+                    result.bytes = device.readProfile(profile);
+                    result.profile = profile;
                     result.status = "Connected";
                     result.detail = info.modelName + " / " + info.keyboardLayout +
-                        " / Firmware " + info.firmwareVersion + " / Profile " + std::to_string(info.currentProfile+1);
+                        " / Firmware " + info.firmwareVersion + " / Profile " + std::to_string(profile+1);
+                    if (profile != info.currentProfile)
+                        result.detail += " (keyboard is on Profile " + std::to_string(info.currentProfile+1) + ")";
                     return result;
                 } catch (const std::exception& error) { lastError = error.what(); }
             }
@@ -118,7 +121,7 @@ void MainWindow::pollScan()
             keymap_ = std::move(profile);
             savedBytes_ = keymap_.toBytes();
             loaded_ = true;
-            deviceProfile_ = result.profile;
+            selectedProfile_ = result.profile;
             summary_ = result.detail;
             message_.clear();
         }
@@ -131,29 +134,33 @@ void MainWindow::beginApply()
     status_ = "Applying...";
     message_ = "Writing the profile to the keyboard. Do not unplug it.";
     auto bytes = keymap_.toBytes();
-    const auto expected = deviceProfile_;
-    apply_ = std::async(std::launch::async, [bytes = std::move(bytes), expected] {
-        ApplyResult result{false, {}, bytes};
+    const auto target = selectedProfile_;
+    apply_ = std::async(std::launch::async, [bytes = std::move(bytes), target] {
+        ApplyResult result{false, {}, bytes, 0};
         try {
             auto transport = openStudio();
             hhkbs::device::HhkbStudioDevice device(*transport);
-            const auto profile = expected.value_or(device.readInformation().currentProfile);
-            device.requireTarget(profile);
-            const auto backup = device.readCurrentProfile();
+            const auto profile = target.value_or(device.readInformation().currentProfile);
+            std::filesystem::path path;
+            device.runOnProfile(profile, [&] {
+                device.requireTarget(profile);
+                const auto backup = device.readCurrentProfile();
 
-            // Keep a copy of what the keyboard held; without it a failed write cannot be undone by hand.
-            const auto directory = backupDirectory();
-            std::filesystem::create_directories(directory);
-            char stamp[32]{};
-            const std::time_t now = std::time(nullptr);
-            std::tm local{};
-            localtime_r(&now, &local);
-            std::strftime(stamp, sizeof stamp, "%Y%m%d-%H%M%S", &local);
-            const auto path = directory / ("backup-" + std::string(stamp) + "-profile" + std::to_string(profile + 1) + ".toml");
-            hhkbs::keymap::writeProfile(path, hhkbs::keymap::Keymap(backup), false);
+                // Keep a copy of what the keyboard held; without it a failed write cannot be undone by hand.
+                const auto directory = backupDirectory();
+                std::filesystem::create_directories(directory);
+                char stamp[32]{};
+                const std::time_t now = std::time(nullptr);
+                std::tm local{};
+                localtime_r(&now, &local);
+                std::strftime(stamp, sizeof stamp, "%Y%m%d-%H%M%S", &local);
+                path = directory / ("backup-" + std::string(stamp) + "-profile" + std::to_string(profile + 1) + ".toml");
+                hhkbs::keymap::writeProfile(path, hhkbs::keymap::Keymap(backup), false);
 
-            device.writeCurrentProfile(bytes, backup);
+                device.writeCurrentProfile(bytes, backup);
+            });
             result.ok = true;
+            result.profile = profile;
             result.message = "Applied to profile " + std::to_string(profile + 1) + ". Previous profile saved to " + path.string();
         } catch (const std::exception& error) { result.message = error.what(); }
         return result;
@@ -169,6 +176,7 @@ void MainWindow::pollApply()
         if (result.ok) {
             keymap_ = Keymap(result.bytes);
             savedBytes_ = keymap_.toBytes();
+            selectedProfile_ = result.profile;
             status_ = "Applied";
         } else status_ = "Apply failed";
     } catch (const std::exception& error) { status_ = "Apply failed"; message_ = error.what(); }
@@ -179,6 +187,12 @@ void MainWindow::requestClose()
     if (busy()) { message_ = "Please wait for the keyboard operation to finish before closing."; return; }
     if (dialog_ == Dialog::None) request(Action::Close);
 }
+void MainWindow::selectProfile(std::uint16_t profile)
+{
+    if (busy() || demo_ || profile == selectedProfile_) return;
+    requestedProfile_ = profile;
+    request(Action::SwitchProfile);
+}
 void MainWindow::request(Action action)
 {
     if (unsaved()) { pending_ = action; dialog_ = Dialog::Unsaved; }
@@ -186,7 +200,8 @@ void MainWindow::request(Action action)
 }
 void MainWindow::perform(Action action)
 {
-    if (action == Action::Read) beginScan();
+    if (action == Action::Read) beginScan(selectedProfile_);
+    else if (action == Action::SwitchProfile) beginScan(requestedProfile_);
     else if (action == Action::Import) openFiles(false);
     else if (action == Action::Close) close_ = true;
 }
@@ -314,10 +329,13 @@ void MainWindow::drawDialog()
         if (ImGui::Button("Back")) dialog_ = Dialog::Export;
     } else if (dialog_ == Dialog::Apply) {
         ImGui::TextUnformatted("Apply to keyboard");
-        ImGui::TextWrapped("Write this profile to the keyboard's active profile%s? "
-                           "The current keyboard profile is saved as a backup first, and the result is read back to verify it. "
+        const std::string target = selectedProfile_ ? "Profile " + std::to_string(*selectedProfile_ + 1)
+                                                    : "the keyboard's active profile";
+        ImGui::TextWrapped("Overwrite %s on the keyboard with this profile? "
+                           "The keyboard's current %s is saved as a backup first, and the result is read back to verify it. "
+                           "The keyboard returns to the profile it was on afterwards. "
                            "Do not unplug the keyboard while writing.",
-                           deviceProfile_ ? (" (Profile " + std::to_string(*deviceProfile_ + 1) + ")").c_str() : "");
+                           target.c_str(), target.c_str());
         if (ImGui::Button("Apply")) { finishDialog(); beginApply(); }
     } else if (dialog_ == Dialog::Defaults) {
         ImGui::TextWrapped("Restore the US Profile 1 defaults in the editor? "
@@ -361,6 +379,19 @@ void MainWindow::draw()
     ImGui::Text("  /  %s", status_.c_str());
     ImGui::Spacing();
     ImGui::Separator();
+    ImGui::Spacing();
+    ImGui::BeginDisabled(demo_ || busy);
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted("Keyboard profile");
+    for (std::uint16_t i=0; i<4; ++i) {
+        ImGui::SameLine();
+        const bool selected = selectedProfile_ && *selectedProfile_ == i;
+        if (selected) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(.69f,.80f,.97f,1));
+        const auto label = "Profile " + std::to_string(i+1);
+        if (ImGui::Button(label.c_str(), ImVec2(96,32))) selectProfile(i);
+        if (selected) ImGui::PopStyleColor();
+    }
+    ImGui::EndDisabled();
     ImGui::Spacing();
     ImGui::BeginDisabled(!loaded_ || busy);
     const char* layers[] = {"Base", "Fn1", "Fn2", "Fn3"};
