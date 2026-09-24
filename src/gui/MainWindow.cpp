@@ -672,11 +672,10 @@ namespace {
 constexpr float kPi = 3.14159265f;
 
 // A circular arrow: a three-quarter arc with a head at its end.
-void drawRefreshIcon(ImDrawList* draw, ImVec2 min, ImVec2 max)
+void drawRefreshIcon(ImDrawList* draw, ImVec2 min, ImVec2 max, ImU32 color)
 {
     const ImVec2 center((min.x + max.x) / 2, (min.y + max.y) / 2);
-    const float r = (max.x - min.x) * .24f;
-    const ImU32 color = ImGui::GetColorU32(ImGuiCol_Text);
+    const float r = (max.x - min.x) * .25f;
     const float start = -kPi * .35f, end = kPi * 1.35f;
     draw->PathArcTo(center, r, start, end);
     draw->PathStroke(color, 0, 1.8f);
@@ -737,14 +736,6 @@ void MainWindow::draw()
     ImGui::SameLine();
     ImGui::SetCursorPosY(smallTop);
     ImGui::Text("  /  %s", status_.c_str());
-    // Re-reads the profile the keyboard is using; it replaces the editor content, so unsaved edits are confirmed first.
-    ImGui::SameLine(0, 8.f);
-    ImGui::SetCursorPosY(titleTop);
-    ImGui::BeginDisabled(busy);
-    if (ImGui::Button("##refresh", ImVec2(ImGui::GetFrameHeight(), ImGui::GetFrameHeight()))) request(Action::Read);
-    drawRefreshIcon(ImGui::GetWindowDrawList(), ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
-    ImGui::EndDisabled();
-    ImGui::SetItemTooltip("Read the profile the keyboard is currently using");
     // Cycles Auto (follow the desktop) -> Light -> Dark; the icon shows the current mode.
     const float themeSize = ImGui::GetFrameHeight();
     ImGui::SameLine(ImGui::GetWindowWidth() - ImGui::GetStyle().WindowPadding.x - themeSize);
@@ -769,7 +760,8 @@ void MainWindow::draw()
     ImGui::EndDisabled();
     // Profiles are right-aligned; wrap below the layers when the window is too narrow.
     const float spacing = ImGui::GetStyle().ItemSpacing.x;
-    const float profilesWidth = ImGui::CalcTextSize("Keyboard profile").x + 4*(96 + spacing);
+    const float refreshWidth = 32.f;
+    const float profilesWidth = refreshWidth + spacing + ImGui::CalcTextSize("Keyboard profile").x + 4*(96 + spacing);
     const float profilesX = ImGui::GetWindowWidth() - ImGui::GetStyle().WindowPadding.x - profilesWidth;
     const float layersEnd = ImGui::GetItemRectMax().x - ImGui::GetWindowPos().x;
     const bool sideBySide = profilesX >= layersEnd + 36.f;
@@ -786,18 +778,21 @@ void MainWindow::draw()
         if (ImGui::Button(label.c_str(), ImVec2(96,32))) selectProfile(i);
         if (selected) ImGui::PopStyleColor();
     }
+    // Re-reads the profile the keyboard is using; it replaces the editor content, so unsaved edits are confirmed first.
+    ImGui::SameLine();
+    if (ImGui::Button("##refresh", ImVec2(refreshWidth, 32))) request(Action::Read);
+    drawRefreshIcon(ImGui::GetWindowDrawList(), ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), ImGui::GetColorU32(ImGuiCol_Text));
+    ImGui::SetItemTooltip("Read the profile the keyboard is currently using");
     ImGui::EndDisabled();
     const std::string caption = summary_ + (unsaved() ? (summary_.empty() ? "Unsaved changes" : "  /  Unsaved changes") : "");
     const auto& style = ImGui::GetStyle();
-    // Reserve exactly what is drawn under the keyboard: the button row plus the demo note and message when present.
-    float below = style.ItemSpacing.y + ImGui::GetFrameHeight();
-    if (demo_) below += style.ItemSpacing.y + ImGui::GetTextLineHeight();
-    if (!message_.empty())
-        below += style.ItemSpacing.y + ImGui::CalcTextSize(message_.c_str(), nullptr, false, ImGui::GetContentRegionAvail().x).y;
+    // Reserve exactly what is drawn under the keyboard: the button row. Messages live inside the keyboard frame.
+    const float below = style.ItemSpacing.y + ImGui::GetFrameHeight();
     const float boardHeight = std::max(320.f, ImGui::GetContentRegionAvail().y - below - 2.f);
     ImGui::BeginDisabled(busy);
     if (loaded_) {
-        if (const auto slot = drawKeyboard(keymap_, layer_, boardHeight, caption)) {
+        if (const auto slot = drawKeyboard(keymap_, layer_, boardHeight, caption,
+                                       message_.empty() && demo_ ? "Demo mode never writes to a keyboard." : message_, message_.empty())) {
             slot_ = *slot;
             assignment_.reset(keymap_.scanCode(layer_,slot_));
             dialog_ = Dialog::Assign;
@@ -805,6 +800,7 @@ void MainWindow::draw()
     } else {
         ImGui::BeginChild("No profile", ImVec2(0,boardHeight), ImGuiChildFlags_Borders);
         ImGui::TextWrapped("%s", busy ? "Looking for an HHKB Studio..." : "Connect a keyboard or import a profile to begin.");
+        if (!message_.empty()) ImGui::TextWrapped("%s", message_.c_str());
         ImGui::EndChild();
     }
     // Left: moving data in and out. Right: the editor and the one action that writes to the keyboard.
@@ -839,8 +835,6 @@ void MainWindow::draw()
     if (ImGui::Button("Apply to keyboard")) openApply();
     ImGui::EndDisabled();
     ImGui::PopStyleColor(4);
-    if (demo_) ImGui::TextDisabled("Demo mode never writes to a keyboard.");
-    if (!message_.empty()) ImGui::TextWrapped("%s", message_.c_str());
     drawDialog();
     ImGui::End();
 }

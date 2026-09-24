@@ -29,7 +29,8 @@ std::vector<std::string> wrapWords(ImFont* font, float fontSize, const std::stri
 
 std::optional<std::size_t> drawKeyboard(const hhkbs::keymap::Keymap& keymap,
                                       std::size_t layer, float height,
-                                      const std::string& caption)
+                                      const std::string& caption,
+                                      const std::string& notice, bool noticeMuted)
 {
     std::optional<std::size_t> activated;
     ImGui::BeginChild("Keyboard", ImVec2(0, height), ImGuiChildFlags_Borders,
@@ -102,6 +103,13 @@ std::optional<std::size_t> drawKeyboard(const hhkbs::keymap::Keymap& keymap,
     };
     for (const auto& pos : hhkbs::keymap::KeyboardLayout::usStudio()) key(pos, false);
     for (const auto& pos : hhkbs::keymap::KeyboardLayout::gesturePads()) key(pos, true);
+    if (!notice.empty()) {
+        const float wrap = std::min(205.f, available.x * .22f);
+        const auto extent = ImGui::CalcTextSize(notice.c_str(), nullptr, false, wrap);
+        draw->AddText(ImGui::GetFont(), ImGui::GetFontSize(),
+                      ImVec2(start.x + 2, start.y + ImGui::GetWindowHeight() - ImGui::GetStyle().WindowPadding.y * 2 + 8 - extent.y),
+                      ImGui::GetColorU32(noticeMuted ? ImGuiCol_TextDisabled : ImGuiCol_Text), notice.c_str(), nullptr, wrap);
+    }
     ImGui::EndChild();
     return activated;
 }
