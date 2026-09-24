@@ -16,7 +16,7 @@ public:
     void requestClose();
     [[nodiscard]] bool shouldClose() const { return close_; }
 private:
-    enum class Action { None, Read, SwitchProfile, Import, Restore, Close };
+    enum class Action { None, Read, SwitchProfile, Import, LoadBackup, Close };
     enum class Dialog { None, Assign, Unsaved, Import, Export, Overwrite, Defaults, Apply, Backups, DeleteBackup, CleanBackups };
     struct ScanResult {
         std::string status;
@@ -39,9 +39,12 @@ private:
     void request(Action action);
     void perform(Action action);
     void openFiles(bool save);
-    void openBackups();
+    void openBackups(bool manage = false);
+    void refreshBackupCount();
     void openApply();
     void drawBackups();
+    void drawBackupList();
+    void requestLoadBackup(const hhkbs::keymap::BackupEntry& entry, bool thenApply);
     void drawDeleteBackup();
     void drawCleanBackups();
     [[nodiscard]] bool loadBackup(const hhkbs::keymap::BackupEntry& entry);
@@ -49,12 +52,17 @@ private:
     void drawFiles();
     void saveFile(bool overwrite);
     void finishDialog();
+    void cancelDialog();
     [[nodiscard]] bool unsaved() const;
 
     hhkbs::keymap::Keymap keymap_;
     std::vector<std::uint8_t> savedBytes_;
     std::vector<hhkbs::keymap::BackupEntry> backups_;
     std::optional<std::size_t> backupChoice_;
+    std::optional<hhkbs::keymap::BackupEntry> pendingBackup_;
+    bool pendingBackupApply_ = false;
+    bool selectManageTab_ = false;
+    std::size_t backupCount_ = 0;
     int keepBackups_ = 5;
     std::future<ScanResult> scan_;
     std::future<ApplyResult> apply_;
