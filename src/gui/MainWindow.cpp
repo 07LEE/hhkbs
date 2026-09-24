@@ -795,7 +795,7 @@ void MainWindow::draw()
     ImGui::BeginDisabled(busy);
     if (loaded_) {
         if (const auto slot = drawKeyboard(keymap_, layer_, boardHeight, caption,
-                                       message_.empty() && demo_ ? "Demo mode never writes to a keyboard." : message_, message_.empty())) {
+                                       message_.empty() && demo_ ? "Demo mode: nothing is written." : message_, message_.empty())) {
             slot_ = *slot;
             assignment_.reset(keymap_.scanCode(layer_,slot_), keyName(slot_) + " (" + layerNames[layer_] + ")");
             dialog_ = Dialog::Assign;

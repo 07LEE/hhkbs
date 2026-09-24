@@ -4,11 +4,18 @@
 #include "keymap/ScanCodeCatalog.h"
 #include <imgui.h>
 #include <algorithm>
+#include <cctype>
 #include <sstream>
 #include <string>
 #include <vector>
 
 namespace {
+bool sameText(const std::string& a, const std::string& b)
+{
+    return std::equal(a.begin(), a.end(), b.begin(), b.end(),
+                      [](unsigned char x, unsigned char y) { return std::tolower(x) == std::tolower(y); });
+}
+
 // Greedy word wrap; returns no lines when a single word is wider than maxWidth.
 std::vector<std::string> wrapWords(ImFont* font, float fontSize, const std::string& text, float maxWidth)
 {
@@ -96,8 +103,11 @@ std::optional<std::size_t> drawKeyboard(const hhkbs::keymap::Keymap& keymap,
         draw->PopClipRect();
         if (changed) draw->AddCircleFilled(ImVec2(bottom.x-6, top.y+6), 2.5f, border);
         if (hovered) {
-            const auto description = hhkbs::keymap::ScanCodeCatalog::labelFor(keymap.scanCode(layer, pos.slot));
-            ImGui::SetTooltip("%s: %s (0x%04X)", legend.c_str(), description.c_str(), keymap.scanCode(layer,pos.slot));
+            const auto code = keymap.scanCode(layer, pos.slot);
+            const auto description = hhkbs::keymap::ScanCodeCatalog::labelFor(code);
+            // "J: J" says nothing twice, so a key that still sends its own legend shows the name once.
+            if (sameText(legend, description)) ImGui::SetTooltip("%s (0x%04X)", description.c_str(), code);
+            else ImGui::SetTooltip("%s: %s (0x%04X)", legend.c_str(), description.c_str(), code);
         }
         ImGui::PopID();
     };
