@@ -8,6 +8,16 @@ Unofficial HHKB Studio keymap editor for the US layout on Linux.
 
 Release builds will be available on [GitHub Releases](https://github.com/07LEE/hhkbs/releases).
 
+## Device permissions
+
+HHKBS needs read and write access to the keyboard's hidraw device, which Linux usually restricts to root. If HHKBS reports a permission error, download [60-hhkbs.rules](packaging/60-hhkbs.rules). Run these commands from the folder containing the downloaded file, then reconnect the keyboard:
+
+```bash
+sudo install -m 0644 60-hhkbs.rules /etc/udev/rules.d/60-hhkbs.rules
+sudo udevadm control --reload-rules
+sudo udevadm trigger
+```
+
 ## Usage
 
 1. Connect the HHKB Studio over USB and open HHKBS. The profile the keyboard is using is loaded.
@@ -25,16 +35,6 @@ Apply to keyboard overwrites the selected profile on the keyboard. HHKBS first s
 Do not unplug the keyboard while it is being written. HHKBS is unofficial, so keep your own backup of profiles you care about.
 
 Restore defaults puts the built-in default keymap in the editor. It does not change the keyboard until you apply it.
-
-## Device permissions
-
-If HHKBS reports a permission error, download [60-hhkbs.rules](packaging/60-hhkbs.rules). Run these commands from the folder containing the downloaded file, then reconnect the keyboard:
-
-```bash
-sudo install -m 0644 60-hhkbs.rules /etc/udev/rules.d/60-hhkbs.rules
-sudo udevadm control --reload-rules
-sudo udevadm trigger
-```
 
 ## License
 
