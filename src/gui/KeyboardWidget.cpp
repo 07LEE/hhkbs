@@ -1,4 +1,5 @@
 #include "gui/KeyboardWidget.h"
+#include "gui/Theme.h"
 #include "keymap/KeyboardLayout.h"
 #include "keymap/ScanCodeCatalog.h"
 #include <imgui.h>
@@ -33,17 +34,18 @@ std::optional<std::size_t> drawKeyboard(const hhkbs::keymap::Keymap& keymap,
         if (ImGui::InvisibleButton("key", size, ImGuiButtonFlags_EnableNav)) activated = pos.slot;
         const bool hovered = ImGui::IsItemHovered() || ImGui::IsItemFocused();
         const bool changed = keymap.isKeyModified(layer, pos.slot);
-        const auto background = changed ? IM_COL32(220,234,255,255) :
-            hovered ? IM_COL32(226,232,242,255) : gesture ? IM_COL32(244,239,255,255) : IM_COL32(248,249,251,255);
-        const auto border = changed ? IM_COL32(43,109,229,255) :
-            gesture ? IM_COL32(191,178,225,255) : IM_COL32(199,208,221,255);
+        const auto& pal = theme::palette();
+        const auto background = changed ? pal.keyChanged :
+            hovered ? pal.keyHover : gesture ? pal.keyGesture : pal.keyFill;
+        const auto border = changed ? pal.keyBorderChanged :
+            gesture ? pal.keyBorderGesture : pal.keyBorder;
         draw->AddRectFilled(top, bottom, background, 6);
         draw->AddRect(top, bottom, border, 6, 0, changed ? 2.f : 1.f);
         const auto& legend = pos.legend;
         const float legendSize = std::clamp(unit * .16f, 9.f, 13.f);
         draw->PushClipRect(top, bottom, true);
         draw->AddText(ImGui::GetFont(), legendSize, ImVec2(top.x+5, top.y+4),
-                      IM_COL32(112,121,136,255), legend.c_str());
+                      pal.keyLegend, legend.c_str());
         const auto label = hhkbs::keymap::ScanCodeCatalog::compactLabelFor(keymap.scanCode(layer, pos.slot));
         float fontSize = std::clamp(unit * .24f, 11.f, 19.f);
         auto extent = ImGui::GetFont()->CalcTextSizeA(fontSize, 1000, 0, label.c_str());
@@ -51,7 +53,7 @@ std::optional<std::size_t> drawKeyboard(const hhkbs::keymap::Keymap& keymap,
         extent = ImGui::GetFont()->CalcTextSizeA(fontSize, 1000, 0, label.c_str());
         draw->AddText(ImGui::GetFont(), fontSize,
                       ImVec2(top.x+(size.x-extent.x)/2, top.y+(size.y-extent.y)/2+6),
-                      IM_COL32(32,40,53,255), label.c_str());
+                      pal.keyLabel, label.c_str());
         draw->PopClipRect();
         if (changed) draw->AddCircleFilled(ImVec2(bottom.x-6, top.y+6), 2.5f, border);
         if (hovered) {

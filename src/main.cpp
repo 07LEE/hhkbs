@@ -1,4 +1,5 @@
 #include "gui/MainWindow.h"
+#include "gui/Theme.h"
 #include <GLFW/glfw3.h>
 #include <imgui.h>
 #include <imgui_impl_glfw.h>
@@ -85,16 +86,9 @@ int main(int argc, char* argv[])
     io.IniFilename = nullptr;
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     loadSystemFont(*io.Fonts);
-    ImGui::StyleColorsLight();
-    auto& style = ImGui::GetStyle();
-    style.WindowPadding = ImVec2(24,24);
-    style.FramePadding = ImVec2(12,8);
-    style.ItemSpacing = ImVec2(10,10);
-    style.FrameRounding = 5;
-    style.ChildRounding = 10;
-    style.WindowRounding = 8;
-    style.Colors[ImGuiCol_WindowBg] = ImVec4(.97f,.98f,.99f,1);
-    style.Colors[ImGuiCol_Button] = ImVec4(.88f,.91f,.95f,1);
+    const auto themeMode = theme::requestedMode();
+    bool dark = themeMode == theme::Mode::Auto ? theme::systemPrefersDark() : themeMode == theme::Mode::Dark;
+    theme::apply(dark);
     if (!ImGui_ImplGlfw_InitForOpenGL(window.get(),true) || !ImGui_ImplOpenGL3_Init("#version 130")) {
         std::fprintf(stderr,"Could not initialize the GUI backend.\n");
         ImGui::DestroyContext();
@@ -104,6 +98,7 @@ int main(int argc, char* argv[])
     try {
         MainWindow app(demo);
         int frames = 0;
+        bool wasFocused = true;
         const auto start = std::chrono::steady_clock::now();
         const char* screenshot = std::getenv("HHKBS_SCREENSHOT");
         const char* delayText = std::getenv("HHKBS_SCREENSHOT_DELAY_MS");
@@ -114,6 +109,13 @@ int main(int argc, char* argv[])
                 glfwSetWindowShouldClose(window.get(),GLFW_FALSE);
                 app.requestClose();
             }
+            // Follow the desktop's color scheme when the window regains focus.
+            const bool focused = glfwGetWindowAttrib(window.get(),GLFW_FOCUSED) == GLFW_TRUE;
+            if (focused && !wasFocused && themeMode == theme::Mode::Auto) {
+                const bool now = theme::systemPrefersDark();
+                if (now != dark) { dark = now; theme::apply(dark); }
+            }
+            wasFocused = focused;
             ImGui_ImplOpenGL3_NewFrame();
             ImGui_ImplGlfw_NewFrame();
             ImGui::NewFrame();
@@ -122,7 +124,8 @@ int main(int argc, char* argv[])
             int width=0, height=0;
             glfwGetFramebufferSize(window.get(),&width,&height);
             glViewport(0,0,width,height);
-            glClearColor(.97f,.98f,.99f,1);
+            const auto& bg = theme::palette().window;
+            glClearColor(bg.x,bg.y,bg.z,1);
             glClear(GL_COLOR_BUFFER_BIT);
             ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
             if (screenshot && width>0 && height>0 && std::chrono::steady_clock::now()-start >= screenshotDelay) {

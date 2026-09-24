@@ -75,6 +75,8 @@ add_executable(hhkbs
     src/gui/KeyboardWidget.h
     src/gui/MainWindow.cpp
     src/gui/MainWindow.h
+    src/gui/Theme.cpp
+    src/gui/Theme.h
 )
 
 set_target_properties(hhkbs PROPERTIES

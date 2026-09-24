@@ -1,4 +1,5 @@
 #include "gui/MainWindow.h"
+#include "gui/Theme.h"
 #include "gui/KeyboardWidget.h"
 #include "device/DeviceDiscovery.h"
 #include "device/HidrawTransport.h"
@@ -509,7 +510,7 @@ void MainWindow::drawDialog()
         for (std::uint16_t i=0; i<4; ++i) {
             if (i) ImGui::SameLine();
             const bool chosen = applyTarget_ && *applyTarget_ == i;
-            if (chosen) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(.69f,.80f,.97f,1));
+            if (chosen) ImGui::PushStyleColor(ImGuiCol_Button, theme::palette().selected);
             const auto label = "Profile " + std::to_string(i+1);
             if (ImGui::Button(label.c_str(), ImVec2(96,32))) applyTarget_ = i;
             if (chosen) ImGui::PopStyleColor();
@@ -579,7 +580,7 @@ void MainWindow::draw()
     for (std::size_t i=0; i<4; ++i) {
         ImGui::SameLine();
         const bool selected = i == layer_;
-        if (selected) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(.69f,.80f,.97f,1));
+        if (selected) ImGui::PushStyleColor(ImGuiCol_Button, theme::palette().selected);
         if (ImGui::Button(layers[i], ImVec2(76,32))) layer_ = i;
         if (selected) ImGui::PopStyleColor();
     }
@@ -598,7 +599,7 @@ void MainWindow::draw()
     for (std::uint16_t i=0; i<4; ++i) {
         ImGui::SameLine();
         const bool selected = selectedProfile_ && *selectedProfile_ == i;
-        if (selected) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(.69f,.80f,.97f,1));
+        if (selected) ImGui::PushStyleColor(ImGuiCol_Button, theme::palette().selected);
         const auto label = "Profile " + std::to_string(i+1);
         if (ImGui::Button(label.c_str(), ImVec2(96,32))) selectProfile(i);
         if (selected) ImGui::PopStyleColor();
@@ -651,10 +652,10 @@ void MainWindow::draw()
     ImGui::EndDisabled();
     ImGui::EndDisabled();
     ImGui::SameLine();
-    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(.25f,.52f,.96f,1));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(.20f,.46f,.90f,1));
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(.16f,.40f,.84f,1));
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1,1,1,1));
+    ImGui::PushStyleColor(ImGuiCol_Button, theme::palette().accent);
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, theme::palette().accentHovered);
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, theme::palette().accentActive);
+    ImGui::PushStyleColor(ImGuiCol_Text, theme::palette().accentText);
     ImGui::BeginDisabled(!loaded_ || demo_ || busy);
     if (ImGui::Button("Apply to keyboard")) openApply();
     ImGui::EndDisabled();
