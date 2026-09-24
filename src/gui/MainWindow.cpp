@@ -28,6 +28,17 @@ using hhkbs::keymap::KeyboardLayout;
 
 namespace {
 
+constexpr const char* layerNames[] = {"Base", "Fn1", "Fn2", "Fn3"};
+
+// The legend printed on a key, e.g. "Esc" or "Left side Up".
+std::string keyName(std::size_t slot)
+{
+    for (const auto* keys : {&KeyboardLayout::usStudio(), &KeyboardLayout::gesturePads()})
+        for (const auto& key : *keys)
+            if (key.slot == slot) return key.legend;
+    return "Key " + std::to_string(slot);
+}
+
 std::unique_ptr<hhkbs::device::HidrawTransport> openStudio()
 {
     for (const auto& item : hhkbs::device::DeviceDiscovery::findHhkbStudioInterfaces()) {
@@ -602,9 +613,11 @@ void MainWindow::drawDialog()
     ImGui::SetNextWindowSize(ImVec2(620,0), ImGuiCond_Always);
     if (!ImGui::BeginPopupModal("HHKBS", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
     const bool filesDialog = dialog_ == Dialog::Import || dialog_ == Dialog::Export;
-    const bool ownCancel = dialog_ == Dialog::Backups || filesDialog;  // these draw Cancel (and errors) themselves
+    const bool ownCancel = dialog_ == Dialog::Backups || dialog_ == Dialog::Assign || filesDialog;  // these draw Cancel (and errors) themselves
     if (dialog_ == Dialog::Assign) {
-        if (const auto code = assignment_.draw()) { keymap_.setScanCode(layer_, slot_, *code); finishDialog(); }
+        bool cancelled = false;
+        if (const auto code = assignment_.draw(cancelled)) { keymap_.setScanCode(layer_, slot_, *code); finishDialog(); }
+        else if (cancelled) cancelDialog();
     } else if (dialog_ == Dialog::Unsaved) {
         ImGui::TextUnformatted("Unsaved keymap changes");
         ImGui::TextWrapped("Export the modified profile before continuing?");
@@ -794,7 +807,7 @@ void MainWindow::draw()
         if (const auto slot = drawKeyboard(keymap_, layer_, boardHeight, caption,
                                        message_.empty() && demo_ ? "Demo mode never writes to a keyboard." : message_, message_.empty())) {
             slot_ = *slot;
-            assignment_.reset(keymap_.scanCode(layer_,slot_));
+            assignment_.reset(keymap_.scanCode(layer_,slot_), keyName(slot_) + " (" + layerNames[layer_] + ")");
             dialog_ = Dialog::Assign;
         }
     } else {
