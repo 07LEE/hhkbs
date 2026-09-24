@@ -142,7 +142,9 @@ void factoryProfileContainsAllDefaultLayers()
     require(profile.scanCode(1, 1) == 0x003A, "Fn1 F1 default is incorrect");
     require(profile.scanCode(1, 31) == 0x00AA, "Fn1 volume default is incorrect");
     require(profile.scanCode(2, 1) == 0x5FA4, "Fn2 pointer speed default is incorrect");
-    require(profile.scanCode(2, 36) == 0x00F5, "Fn2 mouse click default is incorrect");
+    require(profile.scanCode(2, 16) == 0x0014, "Fn2 Q should keep its letter by default");
+    require(profile.scanCode(2, 36) == 0x000B, "Fn2 H should keep its letter by default");
+    require(profile.scanCode(2, 35) == 0x5FA2, "Fn2 pointer speed increase default is incorrect");
     require(profile.scanCode(3, 0) == 0x0029, "Fn3 base default is incorrect");
 }
 

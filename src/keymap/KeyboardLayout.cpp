@@ -255,19 +255,8 @@ std::vector<std::uint8_t> KeyboardLayout::usWindowsFactoryProfile()
         std::pair<std::size_t, Keymap::ScanCode>{7, 0x5F9F},
         std::pair<std::size_t, Keymap::ScanCode>{8, 0x5FA0},
         std::pair<std::size_t, Keymap::ScanCode>{9, 0x5FA1},
-        std::pair<std::size_t, Keymap::ScanCode>{16, 0x005F},
-        std::pair<std::size_t, Keymap::ScanCode>{17, 0x0060},
-        std::pair<std::size_t, Keymap::ScanCode>{18, 0x0061},
-        std::pair<std::size_t, Keymap::ScanCode>{31, 0x005C},
-        std::pair<std::size_t, Keymap::ScanCode>{32, 0x005D},
-        std::pair<std::size_t, Keymap::ScanCode>{33, 0x005E},
         std::pair<std::size_t, Keymap::ScanCode>{35, 0x5FA2},
-        std::pair<std::size_t, Keymap::ScanCode>{36, 0x00F5},
-        std::pair<std::size_t, Keymap::ScanCode>{46, 0x0059},
-        std::pair<std::size_t, Keymap::ScanCode>{47, 0x005A},
-        std::pair<std::size_t, Keymap::ScanCode>{48, 0x005B},
         std::pair<std::size_t, Keymap::ScanCode>{50, 0x5FA3},
-        std::pair<std::size_t, Keymap::ScanCode>{65, 0x0062},
     };
     for (const auto& [slot, scanCode] : fn2Overrides) {
         setScanCode(bytes, 2, slot, scanCode);
