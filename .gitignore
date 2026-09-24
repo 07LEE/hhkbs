@@ -25,6 +25,9 @@ AppDir/
 .vscode/
 .idea/
 
+# Personal keyboard profile backups
+/profiles/
+
 # Temporary files
 *.swp
 *~
