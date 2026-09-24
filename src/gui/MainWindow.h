@@ -41,7 +41,7 @@ private:
     void openFiles(bool save);
     void openBackups();
     void drawBackups();
-    void loadBackup(const hhkbs::keymap::BackupEntry& entry);
+    [[nodiscard]] bool loadBackup(const hhkbs::keymap::BackupEntry& entry);
     void drawDialog();
     void drawFiles();
     void saveFile(bool overwrite);
@@ -51,6 +51,7 @@ private:
     hhkbs::keymap::Keymap keymap_;
     std::vector<std::uint8_t> savedBytes_;
     std::vector<hhkbs::keymap::BackupEntry> backups_;
+    std::optional<std::size_t> backupChoice_;
     std::future<ScanResult> scan_;
     std::future<ApplyResult> apply_;
     // The keyboard profile shown in the editor; only set once it has been read or applied.

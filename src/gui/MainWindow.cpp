@@ -202,10 +202,11 @@ void MainWindow::openFiles(bool save)
 void MainWindow::openBackups()
 {
     backups_ = hhkbs::keymap::listBackups(hhkbs::keymap::backupDirectory());
+    backupChoice_.reset();
     dialogError_.clear();
     dialog_ = Dialog::Backups;
 }
-void MainWindow::loadBackup(const hhkbs::keymap::BackupEntry& entry)
+bool MainWindow::loadBackup(const hhkbs::keymap::BackupEntry& entry)
 {
     try {
         auto profile = hhkbs::keymap::readProfile(entry.path);
@@ -217,13 +218,15 @@ void MainWindow::loadBackup(const hhkbs::keymap::BackupEntry& entry)
         status_ = "Loaded backup";
         message_.clear();
         finishDialog();
+        return true;
     } catch (const std::exception& error) { dialogError_ = error.what(); }
+    return false;
 }
 void MainWindow::drawBackups()
 {
     ImGui::TextUnformatted("Restore from backup");
-    ImGui::TextWrapped("A backup is saved before every apply. Choosing one loads it into the editor for the profile it came from; "
-                       "nothing is written to the keyboard until you apply it.");
+    ImGui::TextWrapped("A backup is saved before every apply. Choose one, then load it into the editor for the profile it came from "
+                       "or restore it to the keyboard right away.");
     ImGui::TextDisabled("%s", hhkbs::keymap::backupDirectory().c_str());
     ImGui::BeginChild("Backups", ImVec2(0, 250), ImGuiChildFlags_Borders);
     if (backups_.empty()) ImGui::TextWrapped("No backups yet.");
@@ -231,11 +234,17 @@ void MainWindow::drawBackups()
         const auto& entry = backups_[i];
         const auto label = entry.timestamp + "    Profile " + std::to_string(entry.profile + 1);
         ImGui::PushID(static_cast<int>(i));
-        if (ImGui::Selectable(label.c_str())) { loadBackup(entry); ImGui::PopID(); break; }
+        if (ImGui::Selectable(label.c_str(), backupChoice_ == i)) backupChoice_ = i;
         ImGui::PopID();
     }
     ImGui::EndChild();
-    ImGui::Dummy(ImVec2(0, 0));  // start a new row so the shared Cancel button sits below the list
+    ImGui::BeginDisabled(!backupChoice_);
+    if (ImGui::Button("Load into editor")) static_cast<void>(loadBackup(backups_[*backupChoice_]));
+    ImGui::SameLine();
+    ImGui::BeginDisabled(demo_);
+    if (ImGui::Button("Restore and apply") && loadBackup(backups_[*backupChoice_])) dialog_ = Dialog::Apply;
+    ImGui::EndDisabled();
+    ImGui::EndDisabled();
 }
 void MainWindow::finishDialog()
 {
