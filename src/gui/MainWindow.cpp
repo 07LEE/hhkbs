@@ -110,7 +110,7 @@ void MainWindow::beginScan(std::optional<std::uint16_t> target)
     status_ = "Searching...";
     message_ = "Checking available HID interfaces...";
     scan_ = std::async(std::launch::async, [target] {
-        ScanResult result{"No device", "Connect an HHKB Studio, import a TOML profile, or start with --demo.", {}, std::nullopt};
+        ScanResult result{"No device", "Connect an HHKB Studio, import a TOML profile, or start with --demo.", {}, std::nullopt, {}, {}};
         try {
             const auto devices = hhkbs::device::DeviceDiscovery::findHhkbStudioInterfaces();
             bool permission = false;
@@ -125,6 +125,10 @@ void MainWindow::beginScan(std::optional<std::uint16_t> target)
                     const auto profile = target.value_or(info.currentProfile);
                     result.bytes = device.readProfile(profile);
                     result.profile = profile;
+                    result.path = item.path;
+                    for (std::size_t pad = 0; pad < result.pads.size(); ++pad) {
+                        try { result.pads[pad] = device.padState(pad); } catch (const std::exception&) {}
+                    }
                     result.status = "Connected";
                     result.detail = info.modelName + " / " + info.keyboardLayout +
                         " / Firmware " + info.firmwareVersion + " / Profile " + std::to_string(profile+1);
@@ -161,10 +165,44 @@ void MainWindow::pollScan()
             savedBytes_ = keymap_.toBytes();
             loaded_ = true;
             selectedProfile_ = result.profile;
+            if (!result.path.empty()) {
+                pads_.start(result.path);
+                for (std::size_t pad = 0; pad < result.pads.size(); ++pad)
+                    if (result.pads[pad]) pads_.set(pad, *result.pads[pad]);
+            }
             summary_ = result.detail;
             message_.clear();
         }
     } catch (const std::exception& error) { status_ = "Profile error"; message_ = error.what(); }
+}
+
+void MainWindow::beginPadChange(const std::size_t pad, const bool on)
+{
+    if (busy() || demo_) return;
+    status_ = "Switching pad...";
+    message_.clear();
+    pad_ = std::async(std::launch::async, [pad, on] {
+        PadResult result{false, pad, on, {}};
+        try {
+            auto transport = openStudio();
+            hhkbs::device::HhkbStudioDevice(*transport).setPadState(pad, on);
+            result.ok = true;
+        } catch (const std::exception& error) { result.message = error.what(); }
+        return result;
+    });
+}
+
+void MainWindow::pollPadChange()
+{
+    if (!pad_.valid() || pad_.wait_for(std::chrono::seconds(0)) != std::future_status::ready) return;
+    const auto result = pad_.get();
+    if (result.ok) {
+        pads_.set(result.pad, result.on);
+        status_ = "Connected";
+    } else {
+        status_ = "Pad change failed";
+        message_ = result.message;
+    }
 }
 
 void MainWindow::beginApply()
@@ -721,6 +759,7 @@ void MainWindow::draw()
 {
     pollScan();
     pollApply();
+    pollPadChange();
     const bool busy = this->busy();
     auto* viewport = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(viewport->WorkPos);
@@ -792,10 +831,18 @@ void MainWindow::draw()
     // Reserve exactly what is drawn under the keyboard: the button row. Messages live inside the keyboard frame.
     const float below = style.ItemSpacing.y + ImGui::GetFrameHeight();
     const float boardHeight = std::max(320.f, ImGui::GetContentRegionAvail().y - below - 2.f);
+    std::array<std::optional<bool>, 4> padStates{};
+    for (std::size_t pad = 0; pad < padStates.size(); ++pad) {
+        const auto state = pads_.state(pad);
+        if (state != hhkbs::device::PadMonitor::State::Unknown) padStates[pad] = state == hhkbs::device::PadMonitor::State::On;
+    }
     ImGui::BeginDisabled(busy);
     if (loaded_) {
-        if (const auto slot = drawKeyboard(keymap_, layer_, boardHeight, caption,
-                                       message_.empty() && demo_ ? "Demo mode: nothing is written." : message_, message_.empty())) {
+        std::optional<std::size_t> padToggled;
+        const auto slot = drawKeyboard(keymap_, layer_, boardHeight, padStates, padToggled, caption,
+                                       message_.empty() && demo_ ? "Demo mode: nothing is written." : message_, message_.empty());
+        if (padToggled) beginPadChange(*padToggled, !padStates[*padToggled].value_or(true));
+        if (slot) {
             slot_ = *slot;
             assignment_.reset(keymap_.scanCode(layer_,slot_), keyName(slot_) + " (" + layerNames[layer_] + ")");
             dialog_ = Dialog::Assign;

@@ -114,6 +114,35 @@ bool HhkbStudioDevice::tryActivate(const std::uint16_t profile)
     }
 }
 
+bool HhkbStudioDevice::padState(const std::size_t pad)
+{
+    const auto change = protocol::decodePadNotification(
+        transport_.exchange(protocol::encodePadStateRequest(pad)));
+    if (!change || change->pad != pad) {
+        throw DeviceError(
+            DeviceErrorCode::Protocol,
+            "HHKB Studio answered a gesture pad request unexpectedly");
+    }
+    return change->on;
+}
+
+void HhkbStudioDevice::setPadState(const std::size_t pad, const bool on)
+{
+    const auto response = transport_.exchange(protocol::encodePadStateWrite(pad, on));
+    const bool acknowledged = response[0] == 0x03 && response[1] == 0x11 && response[2] == 0x05
+        && response[3] == 0x01 && response[4] == pad && (response[5] != 0) == on;
+    if (!acknowledged) {
+        throw DeviceError(
+            DeviceErrorCode::Protocol,
+            "HHKB Studio did not acknowledge the gesture pad change");
+    }
+    if (padState(pad) != on) {
+        throw DeviceError(
+            DeviceErrorCode::Protocol,
+            "HHKB Studio did not keep the gesture pad change");
+    }
+}
+
 void HhkbStudioDevice::switchProfile(const std::uint16_t profile)
 {
     const auto responses = transport_.exchange(

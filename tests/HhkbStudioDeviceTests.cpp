@@ -2,6 +2,7 @@
 #include "device/DeviceError.h"
 #include "device/HhkbProtocol.h"
 #include "device/HhkbStudioDevice.h"
+#include "device/PadMonitor.h"
 #include "device/Transport.h"
 #include "keymap/Keymap.h"
 
@@ -14,6 +15,10 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <chrono>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <thread>
 #include <unistd.h>
 
 namespace {
@@ -477,6 +482,102 @@ void protocolPacketsAreEncodedAndDecoded()
         "big-endian value was decoded incorrectly");
 }
 
+void padNotificationsAreDecoded()
+{
+    namespace protocol = hhkbs::device::protocol;
+    // Reports captured from a keyboard: 02 11 05 01 <pad> <state>.
+    Report frontRightOn{0x02, 0x11, 0x05, 0x01, 0x02, 0x01};
+    require(protocol::isNotification(frontRightOn), "a pad report must be recognised as a notification");
+    const auto change = protocol::decodePadNotification(frontRightOn);
+    require(change && change->pad == 2 && change->on, "front right on was decoded incorrectly");
+    const auto leftOff = protocol::decodePadNotification(Report{0x02, 0x11, 0x05, 0x01, 0x00, 0x00});
+    require(leftOff && leftOff->pad == 0 && !leftOff->on, "left side off was decoded incorrectly");
+
+    require(!protocol::decodePadNotification(Report{0x02, 0x11, 0x05, 0x01, 0x04, 0x01}),
+            "a pad outside the four must be ignored");
+    require(!protocol::decodePadNotification(Report{0x02, 0x11, 0x05, 0x01, 0x01, 0x02}),
+            "an unknown pad state must be ignored");
+    require(!protocol::decodePadNotification(Report{0x02, 0x11, 0x05, 0x02, 0x01, 0x01}),
+            "a notification of another kind must be ignored");
+    require(!protocol::isNotification(Report{0x02, 0x11, 0x01, 0x00, 0x00}),
+            "the answer to a property request is not a notification");
+}
+
+// A keyboard whose four gesture pads can be read and switched. `dropChanges` makes it acknowledge without acting.
+class PadTransport final : public Transport {
+public:
+    [[nodiscard]] Report exchange(const Report& request) override
+    {
+        Report response = request;
+        const auto pad = request[4];
+        if (request[0] == 0x03) {
+            if (!dropChanges) on.at(pad) = request[5] != 0;
+            return response;
+        }
+        response[5] = on.at(pad) ? 1 : 0;
+        return response;
+    }
+
+    std::array<bool, 4> on{true, true, true, true};
+    bool dropChanges = false;
+};
+
+void gesturePadsAreReadAndSwitched()
+{
+    namespace protocol = hhkbs::device::protocol;
+    require(protocol::encodePadStateRequest(2) == (Report{0x02, 0x11, 0x05, 0x01, 0x02}), "pad request was encoded incorrectly");
+    require(protocol::encodePadStateWrite(3, false) == (Report{0x03, 0x11, 0x05, 0x01, 0x03, 0x00}), "pad off was encoded incorrectly");
+    require(protocol::encodePadStateWrite(0, true) == (Report{0x03, 0x11, 0x05, 0x01, 0x00, 0x01}), "pad on was encoded incorrectly");
+    bool rejected = false;
+    try { static_cast<void>(protocol::encodePadStateRequest(4)); } catch (const std::invalid_argument&) { rejected = true; }
+    require(rejected, "a fifth gesture pad must be rejected before sending");
+
+    PadTransport transport;
+    HhkbStudioDevice device(transport);
+    require(device.padState(1), "front left should read as on");
+    device.setPadState(1, false);
+    require(!device.padState(1) && transport.on[0] && transport.on[2] && transport.on[3],
+            "switching one pad must change only that pad");
+    device.setPadState(1, true);
+    require(device.padState(1), "front left should be on again");
+
+    transport.dropChanges = true;
+    bool caught = false;
+    try { device.setPadState(2, false); } catch (const hhkbs::device::DeviceError&) { caught = true; }
+    require(caught, "a change the keyboard did not keep must be reported");
+}
+
+void padMonitorFollowsNotifications()
+{
+    using hhkbs::device::PadMonitor;
+    const auto fifo = std::filesystem::temp_directory_path() / ("hhkbs-pad-" + std::to_string(::getpid()));
+    require(::mkfifo(fifo.c_str(), 0600) == 0, "could not create the fake device");
+
+    PadMonitor monitor;
+    require(monitor.state(1) == PadMonitor::State::Unknown, "a pad must be unknown before any report");
+    monitor.start(fifo);
+    const int writer = ::open(fifo.c_str(), O_WRONLY);
+    const auto send = [&](const Report& report) { require(::write(writer, report.data(), report.size()) == 32, "write failed"); };
+    const auto waitFor = [&](const std::size_t pad, const PadMonitor::State expected) {
+        for (int attempt = 0; attempt < 100; ++attempt) {
+            if (monitor.state(pad) == expected) return true;
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        }
+        return false;
+    };
+
+    send(Report{0x02, 0x11, 0x05, 0x01, 0x01, 0x01});
+    require(waitFor(1, PadMonitor::State::On), "front left should be on after its report");
+    send(Report{0x02, 0x11, 0x05, 0x01, 0x01, 0x00});
+    require(waitFor(1, PadMonitor::State::Off), "front left should be off after its report");
+    require(monitor.state(0) == PadMonitor::State::Unknown, "a pad that never reported stays unknown");
+
+    monitor.stop();
+    ::close(writer);
+    ::unlink(fifo.c_str());
+    require(monitor.state(1) == PadMonitor::State::Unknown, "pads are unknown once listening stops");
+}
+
 void profileIsReadInBoundedChunks()
 {
     FakeTransport transport;
@@ -542,6 +643,9 @@ int main()
 {
     try {
         informationCommandsAreDecoded();
+        padNotificationsAreDecoded();
+        gesturePadsAreReadAndSwitched();
+        padMonitorFollowsNotifications();
         protocolPacketsAreEncodedAndDecoded();
         profileIsReadInBoundedChunks();
         supportedInterfacesAreDiscovered();
