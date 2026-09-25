@@ -364,6 +364,8 @@ void MainWindow::openBackups(bool manage)
 {
     backups_ = hhkbs::keymap::listBackups(hhkbs::keymap::backupDirectory());
     backupChoice_.reset();
+    tagShownFor_.reset();
+    confirmDelete_ = false;
     backupCount_ = backups_.size();
     dialogError_.clear();
     selectManageTab_ = manage;
@@ -384,7 +386,8 @@ bool MainWindow::loadBackup(const hhkbs::keymap::BackupEntry& entry)
         savedBytes_ = keymap_.toBytes();
         loaded_ = true;
         selectedProfile_ = entry.profile;
-        summary_ = "Backup of Profile " + std::to_string(entry.profile + 1) + " from " + entry.timestamp;
+        summary_ = std::string("Backup ") + (entry.tag.empty() ? "" : "\"" + entry.tag + "\" ") + "of Profile " +
+                   std::to_string(entry.profile + 1) + " from " + entry.timestamp;
         status_ = "Loaded backup";
         message_.clear();
         finishDialog();
@@ -392,70 +395,173 @@ bool MainWindow::loadBackup(const hhkbs::keymap::BackupEntry& entry)
     } catch (const std::exception& error) { dialogError_ = error.what(); }
     return false;
 }
-void MainWindow::drawBackupList()
+void MainWindow::openBackupFolder()
 {
-    ImGui::TextDisabled("%s", hhkbs::keymap::backupDirectory().c_str());
-    ImGui::BeginChild("Backups", ImVec2(0, 230), ImGuiChildFlags_Borders);
+    if (!commandExists("xdg-open"))
+        dialogError_ = "xdg-open was not found. Open " + hhkbs::keymap::backupDirectory().string() + " yourself.";
+    else if (!openFolder(hhkbs::keymap::backupDirectory())) dialogError_ = "Could not open the folder.";
+    else dialogError_.clear();
+}
+// The list fills the dialog down to what sits under it (`belowList`), and an error message under the list takes its
+// own height from the list. So nothing under the list ever floats away from it, whatever the dialog shows.
+void MainWindow::drawBackupList(const float belowList)
+{
+    const auto folder = hhkbs::keymap::backupDirectory();
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextDisabled("%s", folder.c_str());
+    // The button that opens the folder sits on the line that names it.
+    const auto& style = ImGui::GetStyle();
+    const float width = ImGui::CalcTextSize("Open folder").x + style.FramePadding.x * 2;
+    ImGui::SameLine(ImGui::GetWindowWidth() - style.WindowPadding.x - width);
+    ImGui::BeginDisabled(!std::filesystem::is_directory(folder));
+    if (ImGui::Button("Open folder")) openBackupFolder();
+    ImGui::EndDisabled();
+    const float errorHeight = dialogError_.empty() ? 0.f
+        : ImGui::CalcTextSize(dialogError_.c_str(), nullptr, false, ImGui::GetContentRegionAvail().x).y + style.ItemSpacing.y;
+    ImGui::BeginChild("Backups", ImVec2(0, -(belowList + errorHeight)), ImGuiChildFlags_Borders,
+                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     if (backups_.empty()) ImGui::TextDisabled("No backups yet. One is saved before every apply.");
-    for (std::size_t i=0; i<backups_.size(); ++i) {
-        const auto& entry = backups_[i];
-        const auto profile = "Profile " + std::to_string(entry.profile + 1);
-        const float rowX = ImGui::GetCursorPosX(), rowWidth = ImGui::GetContentRegionAvail().x;
-        ImGui::PushID(static_cast<int>(i));
-        if (ImGui::Selectable(entry.timestamp.c_str(), backupChoice_ == i)) backupChoice_ = i;
-        // The profile sits in its own right-hand column, dimmed, on the same line as the date.
-        ImGui::SameLine(rowX + rowWidth - ImGui::CalcTextSize(profile.c_str()).x - 8);
-        ImGui::TextDisabled("%s", profile.c_str());
-        ImGui::PopID();
+    // A table: the date it was saved (dimmed), the tag (bright, blank when there is none), and on the right the
+    // profile it came from, drawn as a small pill.
+    const float pillPadding = 9.f;
+    const float pillInset = 4.f;  // keeps the pill's outline inside the cell, which clips at its edge
+    const float pillWidth = ImGui::CalcTextSize("Profile 4").x + pillPadding * 2;
+    if (!backups_.empty() && ImGui::BeginTable("BackupRows", 3, ImGuiTableFlags_ScrollY | ImGuiTableFlags_RowBg)) {
+        ImGui::TableSetupColumn("Saved", ImGuiTableColumnFlags_WidthFixed, ImGui::CalcTextSize("0000-00-00 00:00:00").x + 24.f);
+        ImGui::TableSetupColumn("Tag", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn("Profile", ImGuiTableColumnFlags_WidthFixed, pillWidth + 16.f);
+        ImGui::TableSetupScrollFreeze(0, 1);
+        const auto rightAligned = [](float width) {
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.f, ImGui::GetContentRegionAvail().x - width));
+        };
+        // Each header is centered over what its column holds: the date, the whole tag column, the pill.
+        const auto header = [](const char* text, float over, float offset) {
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + offset + std::max(0.f, (over - ImGui::CalcTextSize(text).x) / 2));
+            ImGui::TextDisabled("%s", text);
+        };
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0);
+        header("Saved", ImGui::CalcTextSize("0000-00-00 00:00:00").x, 0.f);
+        ImGui::TableSetColumnIndex(1);
+        header("Tag", ImGui::GetContentRegionAvail().x, 0.f);
+        ImGui::TableSetColumnIndex(2);
+        header("Profile", pillWidth, std::max(0.f, ImGui::GetContentRegionAvail().x - pillWidth - pillInset));
+        for (std::size_t i=0; i<backups_.size(); ++i) {
+            const auto& entry = backups_[i];
+            ImGui::PushID(static_cast<int>(i));
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+            if (ImGui::Selectable(entry.timestamp.c_str(), backupChoice_ == i, ImGuiSelectableFlags_SpanAllColumns)) backupChoice_ = i;
+            ImGui::PopStyleColor();
+            ImGui::TableSetColumnIndex(1);
+            ImGui::TextUnformatted(entry.tag.c_str());
+            ImGui::TableSetColumnIndex(2);
+            const auto profile = "Profile " + std::to_string(entry.profile + 1);
+            const ImVec2 size(pillWidth, ImGui::GetTextLineHeight() + 2.f);
+            rightAligned(size.x + pillInset);
+            const ImVec2 top = ImGui::GetCursorScreenPos(), bottom(top.x + size.x, top.y + size.y);
+            const auto& palette = theme::palette();
+            auto* draw = ImGui::GetWindowDrawList();
+            draw->AddRectFilled(top, bottom, palette.keyFill, size.y / 2);
+            draw->AddRect(top, bottom, palette.keyBorder, size.y / 2);
+            const float textWidth = ImGui::CalcTextSize(profile.c_str()).x;
+            draw->AddText(ImVec2(top.x + (size.x - textWidth) / 2, top.y + 1.f), ImGui::GetColorU32(ImGuiCol_Text), profile.c_str());
+            ImGui::Dummy(size);
+            ImGui::PopID();
+        }
+        ImGui::EndTable();
     }
     ImGui::EndChild();
 }
 void MainWindow::drawBackups()
 {
-    dialog::title("Backups");
-    dialog::hint("A backup is saved before every apply.");
+    dialog::title("Backups", "A backup is saved before every apply.");
     if (!ImGui::BeginTabBar("BackupTabs")) return;
     const bool chosen = backupChoice_.has_value();
+    // What is under the list: the row of buttons, and in the Manage tab the tag row too (plus the gaps between them).
+    const auto& style = ImGui::GetStyle();
+    const float footerBelow = style.ItemSpacing.y * 2 + ImGui::GetFrameHeight() + 2.f;
+    const float tagRowBelow = ImGui::GetFrameHeight() + style.ItemSpacing.y;
     if (ImGui::BeginTabItem("Restore")) {
-        dialog::hint("Choose one, then load it into the editor for the profile it came from "
-                     "or restore it to the keyboard right away.");
-        drawBackupList();
+        dialog::hint("Load a backup into the editor, or restore it to the keyboard.");
+        drawBackupList(footerBelow);
         dialog::error(dialogError_);
-        const int hit = dialog::footer({{"Cancel"},
-                                        {"Load into editor", false, false, chosen},
-                                        {"Restore and apply", true, false, chosen && !demo_}});
-        if (hit == 0) cancelDialog();
+        dialog::pinFooter();
+        // The actions start at the left edge, Close is always at the right edge, on both tabs.
+        const int hit = dialog::footer({{"Restore and apply", true, false, chosen && !demo_},
+                                        {"Load into editor", false, false, chosen}},
+                                       {{"Close"}});
+        if (hit == 0) requestLoadBackup(backups_[*backupChoice_], true);
         else if (hit == 1) requestLoadBackup(backups_[*backupChoice_], false);
-        else if (hit == 2) requestLoadBackup(backups_[*backupChoice_], true);
+        else if (hit == 2) cancelDialog();
         ImGui::EndTabItem();
     }
     // Coming back from a delete or clean-up lands on the tab the user left.
     const auto flags = selectManageTab_ ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None;
     selectManageTab_ = false;
     if (ImGui::BeginTabItem("Manage", nullptr, flags)) {
-        dialog::hint("Delete the backups you no longer need. HHKBS never deletes them on its own.");
-        drawBackupList();
+        dialog::hint("Tag or delete backups. HHKBS never deletes them on its own.");
+        drawBackupList(footerBelow + tagRowBelow);
+        // The tag box follows the chosen backup and starts from its current tag; saving it blank removes the tag.
+        if (!chosen) { tagInput_[0] = '\0'; tagShownFor_.reset(); }
+        else if (tagShownFor_ != backupChoice_) {
+            std::snprintf(tagInput_.data(), tagInput_.size(), "%s", backups_[*backupChoice_].tag.c_str());
+            tagShownFor_ = backupChoice_;
+        }
+        // Everything that acts on the chosen backup is on this one line: its tag, and deleting it.
+        ImGui::BeginDisabled(!chosen);
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted("Tag");
+        ImGui::SameLine();
+        const auto& style = ImGui::GetStyle();
+        const auto buttonWidth = [&](const char* label) { return ImGui::CalcTextSize(label).x + style.FramePadding.x * 2; };
+        // Save tag belongs to the input, so it sits close to it; Delete keeps the usual gap so it is not hit by mistake.
+        const float tagGap = 4.f;
+        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - buttonWidth("Save tag") - buttonWidth("Delete") - tagGap - style.ItemSpacing.x);
+        const bool entered = ImGui::InputText("##tag", tagInput_.data(), tagInput_.size(), ImGuiInputTextFlags_EnterReturnsTrue);
+        ImGui::SameLine(0, tagGap);
+        const bool saveClicked = ImGui::Button("Save tag");
+        ImGui::SameLine();
+        const auto& palette = theme::palette();
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(.78f, .22f, .22f, 1));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(.85f, .28f, .28f, 1));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(.68f, .18f, .18f, 1));
+        ImGui::PushStyleColor(ImGuiCol_Text, palette.accentText);
+        const bool deleteClicked = ImGui::Button("Delete");
+        ImGui::PopStyleColor(4);
+        ImGui::EndDisabled();
+        if (chosen && (entered || saveClicked)) saveBackupTag();
+        if (chosen && deleteClicked) { confirmDelete_ = true; ImGui::OpenPopup("Delete backup"); }
         dialog::error(dialogError_);
-        const int hit = dialog::footer({{"Open folder", false, false, std::filesystem::is_directory(hhkbs::keymap::backupDirectory())},
-                                        {"Clean up...", false, false, !backups_.empty()},
-                                        {"Delete", false, true, chosen},
-                                        {"Close"}});
-        if (hit == 0) {
-            if (!commandExists("xdg-open"))
-                dialogError_ = "xdg-open was not found. Open " + hhkbs::keymap::backupDirectory().string() + " yourself.";
-            else if (!openFolder(hhkbs::keymap::backupDirectory())) dialogError_ = "Could not open the folder.";
-            else dialogError_.clear();
-        } else if (hit == 1) dialog_ = Dialog::CleanBackups;
-        else if (hit == 2) dialog_ = Dialog::DeleteBackup;
-        else if (hit == 3) cancelDialog();
+        dialog::pinFooter();
+        const int hit = dialog::footer({{"Clean up...", false, false, !backups_.empty()}}, {{"Close"}});
+        if (hit == 0) dialog_ = Dialog::CleanBackups;
+        else if (hit == 1) cancelDialog();
+        drawDeleteBackup();
         ImGui::EndTabItem();
     }
     ImGui::EndTabBar();
 }
+void MainWindow::saveBackupTag()
+{
+    if (!backupChoice_) return;
+    const auto path = backups_[*backupChoice_].path;
+    try {
+        hhkbs::keymap::setBackupTag(hhkbs::keymap::backupDirectory(), backups_[*backupChoice_], tagInput_.data());
+    } catch (const std::exception& error) { dialogError_ = error.what(); return; }
+    dialogError_.clear();
+    // Reload so the list shows the new tag, and keep the same backup chosen.
+    backups_ = hhkbs::keymap::listBackups(hhkbs::keymap::backupDirectory());
+    backupChoice_.reset();
+    tagShownFor_.reset();
+    for (std::size_t i = 0; i < backups_.size(); ++i)
+        if (backups_[i].path == path) backupChoice_ = i;
+}
 void MainWindow::drawCleanBackups()
 {
     dialog::title("Clean up backups");
-    dialog::hint("Keep the newest backups of each profile and delete the rest. This cannot be undone.");
+    dialog::hint("Keep the newest backups of each profile and delete the rest. Tagged ones are kept.");
     ImGui::AlignTextToFramePadding();
     ImGui::TextUnformatted("Keep the newest");
     ImGui::SameLine();
@@ -468,6 +574,7 @@ void MainWindow::drawCleanBackups()
     const auto surplus = hhkbs::keymap::backupsBeyondNewest(backups_, static_cast<std::size_t>(keepBackups_));
     ImGui::TextWrapped("%zu of %zu backups will be deleted.", surplus.size(), backups_.size());
     dialog::error(dialogError_);
+    dialog::pinFooter();
     const int hit = dialog::footer({{"Back"}, {"Delete backups", false, true, !surplus.empty()}});
     if (hit == 0) { dialog_ = Dialog::Backups; selectManageTab_ = true; }
     else if (hit == 1) {
@@ -484,20 +591,28 @@ void MainWindow::drawCleanBackups()
         dialogError_ = firstError;
     }
 }
+// The confirmation opens as its own small popup over the Backups window, which stays as it is behind it.
 void MainWindow::drawDeleteBackup()
 {
-    const auto& entry = backups_[*backupChoice_];
+    if (!confirmDelete_ || !backupChoice_) return;
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(.5f,.5f));
+    ImGui::SetNextWindowSize(ImVec2(460,0), ImGuiCond_Always);
+    if (!ImGui::BeginPopupModal("Delete backup", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
+    const auto entry = backups_[*backupChoice_];
     dialog::title("Delete backup");
-    ImGui::TextWrapped("Delete the backup of Profile %d saved on %s? This cannot be undone.", entry.profile + 1, entry.timestamp.c_str());
-    dialog::error(dialogError_);
+    const std::string named = entry.tag.empty() ? "" : "\"" + entry.tag + "\" ";
+    ImGui::TextWrapped("Delete the backup %sof Profile %d saved on %s? This cannot be undone.", named.c_str(), entry.profile + 1, entry.timestamp.c_str());
     const int hit = dialog::footer({{"Back"}, {"Delete backup", false, true}});
-    if (hit == 0) { dialog_ = Dialog::Backups; selectManageTab_ = true; }
+    if (hit == 0) { confirmDelete_ = false; ImGui::CloseCurrentPopup(); }
     else if (hit == 1) {
+        confirmDelete_ = false;
+        ImGui::CloseCurrentPopup();
         try {
             hhkbs::keymap::deleteBackup(hhkbs::keymap::backupDirectory(), entry);
             openBackups(true);
-        } catch (const std::exception& error) { dialogError_ = error.what(); }
+        } catch (const std::exception& error) { dialogError_ = error.what(); }  // shown under the list
     }
+    ImGui::EndPopup();
 }
 void MainWindow::cancelDialog()
 {
@@ -703,8 +818,12 @@ void MainWindow::drawDialog()
     if (!ImGui::IsPopupOpen("HHKBS")) ImGui::OpenPopup("HHKBS");
     const auto* viewport = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(viewport->GetCenter(), ImGuiCond_Appearing, ImVec2(.5f,.5f));
-    ImGui::SetNextWindowSize(ImVec2(620,0), ImGuiCond_Always);
-    if (!ImGui::BeginPopupModal("HHKBS", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
+    // The Backups dialogs share one height, in lines of text so it follows the font, and never taller than the window;
+    // every other dialog is as tall as its content.
+    const bool fixedHeight = dialog_ == Dialog::Backups || dialog_ == Dialog::CleanBackups;
+    const float backupsHeight = std::min(ImGui::GetFrameHeightWithSpacing() * 14.f, viewport->WorkSize.y - 40.f);
+    ImGui::SetNextWindowSize(ImVec2(620, fixedHeight ? backupsHeight : 0), ImGuiCond_Always);
+    if (!ImGui::BeginPopupModal("HHKBS", nullptr, fixedHeight ? ImGuiWindowFlags_NoResize : ImGuiWindowFlags_AlwaysAutoResize)) return;
     // Every dialog draws its own title, error line and footer through dialog::.
     if (dialog_ == Dialog::Assign) {
         bool cancelled = false;
@@ -723,7 +842,6 @@ void MainWindow::drawDialog()
         } else if (hit == 2) openFiles(true);
     } else if (dialog_ == Dialog::Import || dialog_ == Dialog::Export) drawFiles();
     else if (dialog_ == Dialog::Backups) drawBackups();
-    else if (dialog_ == Dialog::DeleteBackup) drawDeleteBackup();
     else if (dialog_ == Dialog::CleanBackups) drawCleanBackups();
     else if (dialog_ == Dialog::Overwrite) {
         dialog::title("Replace existing file?");

@@ -19,7 +19,7 @@ public:
     [[nodiscard]] bool shouldClose() const { return close_; }
 private:
     enum class Action { None, Read, SwitchProfile, Import, LoadBackup, Close };
-    enum class Dialog { None, Assign, Unsaved, Import, Export, Overwrite, Defaults, Apply, Backups, DeleteBackup, CleanBackups };
+    enum class Dialog { None, Assign, Unsaved, Import, Export, Overwrite, Defaults, Apply, Backups, CleanBackups };
     struct ScanResult {
         std::string status;
         std::string detail;
@@ -57,9 +57,11 @@ private:
     void refreshBackupCount();
     void openApply();
     void drawBackups();
-    void drawBackupList();
+    void drawBackupList(float belowList);
+    void openBackupFolder();
     void requestLoadBackup(const hhkbs::keymap::BackupEntry& entry, bool thenApply);
     void drawDeleteBackup();
+    void saveBackupTag();
     void drawCleanBackups();
     [[nodiscard]] bool loadBackup(const hhkbs::keymap::BackupEntry& entry);
     void drawDialog();
@@ -73,9 +75,12 @@ private:
     std::vector<std::uint8_t> savedBytes_;
     std::vector<hhkbs::keymap::BackupEntry> backups_;
     std::optional<std::size_t> backupChoice_;
+    std::array<char, 256> tagInput_{};  // the tag being edited for the chosen backup
+    std::optional<std::size_t> tagShownFor_;  // the backup tagInput_ was filled from
     std::optional<hhkbs::keymap::BackupEntry> pendingBackup_;
     bool pendingBackupApply_ = false;
     bool selectManageTab_ = false;
+    bool confirmDelete_ = false;  // the delete confirmation is open over the Backups window
     std::size_t backupCount_ = 0;
     int keepBackups_ = 5;
     std::future<ScanResult> scan_;

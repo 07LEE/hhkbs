@@ -8,6 +8,14 @@
 #include <stdexcept>
 #include <unistd.h>
 
+namespace {
+std::filesystem::path tagPathFor(std::filesystem::path backup)
+{
+    backup += ".tag";
+    return backup;
+}
+}  // namespace
+
 int main() {
     char name[] = "/tmp/hhkbs-files-XXXXXX";
     const char* created = ::mkdtemp(name);
@@ -81,6 +89,14 @@ int main() {
             throw std::runtime_error("Cleanup should drop only the oldest backups of each profile");
         if (!backupsBeyondNewest(ordered, 4).empty()) throw std::runtime_error("Nothing should go when everything fits");
         if (backupsBeyondNewest(ordered, 0).size() != ordered.size()) throw std::runtime_error("Keeping none drops all");
+        // A tagged backup was kept on purpose: cleanup never drops it, and it does not use up a place.
+        auto keeper = entry(0, "4");
+        keeper.tag = "before the macro";
+        const std::vector<BackupEntry> withTag{entry(0, "5"), keeper, entry(0, "3"), entry(0, "2")};
+        const auto untaggedSurplus = backupsBeyondNewest(withTag, 1);
+        if (untaggedSurplus.size() != 2 || untaggedSurplus[0].timestamp != "3" || untaggedSurplus[1].timestamp != "2")
+            throw std::runtime_error("Cleanup should skip a tagged backup and not count it");
+        if (backupsBeyondNewest(withTag, 0).size() != 3) throw std::runtime_error("Keeping none must still spare the tagged one");
         if (!listBackups(directory / "missing").empty()) throw std::runtime_error("Missing folder should list nothing");
         if (backupFileName(0, 0).find("-profile1.toml") == std::string::npos)
             throw std::runtime_error("Backup file names use the 1-based profile number");
@@ -91,6 +107,40 @@ int main() {
         const auto written = listBackups(roundTrip);
         if (written.size() != 1 || written[0].profile != 2)
             throw std::runtime_error("A backup file name could not be read back");
+
+        // Notes on backups.
+        {
+            auto backup = written[0];
+            if (!backup.tag.empty()) throw std::runtime_error("A backup starts without a tag");
+            setBackupTag(roundTrip, backup, "  before the macro  ");
+            auto tagged = listBackups(roundTrip);
+            if (tagged.size() != 1 || tagged[0].tag != "before the macro")
+                throw std::runtime_error("The tag was not saved and trimmed");
+            if (!std::filesystem::exists(tagPathFor(backup.path)))
+                throw std::runtime_error("The tag belongs in a file next to the backup");
+            for (const auto& item : std::filesystem::directory_iterator(roundTrip))
+                if (item.path().string().find(".tmp") != std::string::npos) throw std::runtime_error("Temporary tag file leaked");
+            const auto rejects = [&](const std::string& text) {
+                try { setBackupTag(roundTrip, backup, text); } catch (const std::exception&) { return true; }
+                return false;
+            };
+            std::string korean;
+            for (std::size_t i = 0; i < maxBackupTagLength; ++i) korean += "\xEA\xB0\x80";  // 가
+            if (rejects(korean)) throw std::runtime_error("A tag of the longest length should be accepted");
+            if (!rejects(korean + "\xEA\xB0\x80")) throw std::runtime_error("A tag that is too long should be refused");
+            if (!rejects("two\nlines")) throw std::runtime_error("A tag with a line break should be refused");
+            if (listBackups(roundTrip)[0].tag != korean) throw std::runtime_error("A refused tag changed the saved one");
+            const auto stranger = BackupEntry{roundTrip / "notes.toml", 0, {}};
+            std::ofstream(stranger.path) << "x";
+            try { setBackupTag(roundTrip, stranger, "x"); throw std::runtime_error("Tagged a file that is not a backup"); }
+            catch (const std::invalid_argument&) {}
+            setBackupTag(roundTrip, backup, "   ");
+            if (!listBackups(roundTrip)[0].tag.empty() || std::filesystem::exists(tagPathFor(backup.path)))
+                throw std::runtime_error("A blank tag should remove the tag");
+            setBackupTag(roundTrip, backup, "keep");
+            deleteBackup(roundTrip, backup);
+            if (std::filesystem::exists(tagPathFor(backup.path))) throw std::runtime_error("Deleting a backup should delete its tag");
+        }
 
         std::filesystem::remove_all(directory);
         std::cout << "Profile file tests passed\n";
