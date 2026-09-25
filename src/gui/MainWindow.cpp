@@ -365,6 +365,7 @@ void MainWindow::openBackups(bool manage)
     backups_ = hhkbs::keymap::listBackups(hhkbs::keymap::backupDirectory());
     backupChoice_.reset();
     tagShownFor_.reset();
+    confirmDelete_ = false;
     backupCount_ = backups_.size();
     dialogError_.clear();
     selectManageTab_ = manage;
@@ -502,8 +503,9 @@ void MainWindow::drawBackups()
             else if (!openFolder(hhkbs::keymap::backupDirectory())) dialogError_ = "Could not open the folder.";
             else dialogError_.clear();
         } else if (hit == 1) dialog_ = Dialog::CleanBackups;
-        else if (hit == 2) dialog_ = Dialog::DeleteBackup;
+        else if (hit == 2) { confirmDelete_ = true; ImGui::OpenPopup("Delete backup"); }
         else if (hit == 3) cancelDialog();
+        drawDeleteBackup();
         ImGui::EndTabItem();
     }
     ImGui::EndTabBar();
@@ -555,21 +557,28 @@ void MainWindow::drawCleanBackups()
         dialogError_ = firstError;
     }
 }
+// The confirmation opens as its own small popup over the Backups window, which stays as it is behind it.
 void MainWindow::drawDeleteBackup()
 {
-    const auto& entry = backups_[*backupChoice_];
+    if (!confirmDelete_ || !backupChoice_) return;
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(.5f,.5f));
+    ImGui::SetNextWindowSize(ImVec2(460,0), ImGuiCond_Always);
+    if (!ImGui::BeginPopupModal("Delete backup", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
+    const auto entry = backups_[*backupChoice_];
     dialog::title("Delete backup");
     const std::string named = entry.tag.empty() ? "" : "\"" + entry.tag + "\" ";
     ImGui::TextWrapped("Delete the backup %sof Profile %d saved on %s? This cannot be undone.", named.c_str(), entry.profile + 1, entry.timestamp.c_str());
-    dialog::error(dialogError_);
     const int hit = dialog::footer({{"Back"}, {"Delete backup", false, true}});
-    if (hit == 0) { dialog_ = Dialog::Backups; selectManageTab_ = true; }
+    if (hit == 0) { confirmDelete_ = false; ImGui::CloseCurrentPopup(); }
     else if (hit == 1) {
+        confirmDelete_ = false;
+        ImGui::CloseCurrentPopup();
         try {
             hhkbs::keymap::deleteBackup(hhkbs::keymap::backupDirectory(), entry);
             openBackups(true);
-        } catch (const std::exception& error) { dialogError_ = error.what(); }
+        } catch (const std::exception& error) { dialogError_ = error.what(); }  // shown under the list
     }
+    ImGui::EndPopup();
 }
 void MainWindow::cancelDialog()
 {
@@ -795,7 +804,6 @@ void MainWindow::drawDialog()
         } else if (hit == 2) openFiles(true);
     } else if (dialog_ == Dialog::Import || dialog_ == Dialog::Export) drawFiles();
     else if (dialog_ == Dialog::Backups) drawBackups();
-    else if (dialog_ == Dialog::DeleteBackup) drawDeleteBackup();
     else if (dialog_ == Dialog::CleanBackups) drawCleanBackups();
     else if (dialog_ == Dialog::Overwrite) {
         dialog::title("Replace existing file?");

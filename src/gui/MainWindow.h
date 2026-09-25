@@ -19,7 +19,7 @@ public:
     [[nodiscard]] bool shouldClose() const { return close_; }
 private:
     enum class Action { None, Read, SwitchProfile, Import, LoadBackup, Close };
-    enum class Dialog { None, Assign, Unsaved, Import, Export, Overwrite, Defaults, Apply, Backups, DeleteBackup, CleanBackups };
+    enum class Dialog { None, Assign, Unsaved, Import, Export, Overwrite, Defaults, Apply, Backups, CleanBackups };
     struct ScanResult {
         std::string status;
         std::string detail;
@@ -79,6 +79,7 @@ private:
     std::optional<hhkbs::keymap::BackupEntry> pendingBackup_;
     bool pendingBackupApply_ = false;
     bool selectManageTab_ = false;
+    bool confirmDelete_ = false;  // the delete confirmation is open over the Backups window
     std::size_t backupCount_ = 0;
     int keepBackups_ = 5;
     std::future<ScanResult> scan_;
