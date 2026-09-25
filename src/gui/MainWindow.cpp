@@ -396,24 +396,57 @@ bool MainWindow::loadBackup(const hhkbs::keymap::BackupEntry& entry)
 void MainWindow::drawBackupList()
 {
     ImGui::TextDisabled("%s", hhkbs::keymap::backupDirectory().c_str());
-    ImGui::BeginChild("Backups", ImVec2(0, 230), ImGuiChildFlags_Borders);
+    ImGui::BeginChild("Backups", ImVec2(0, 230), ImGuiChildFlags_Borders, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     if (backups_.empty()) ImGui::TextDisabled("No backups yet. One is saved before every apply.");
-    for (std::size_t i=0; i<backups_.size(); ++i) {
-        const auto& entry = backups_[i];
-        const auto profile = "Profile " + std::to_string(entry.profile + 1);
-        const std::string& title = entry.tag.empty() ? entry.timestamp : entry.tag;
-        const float rowX = ImGui::GetCursorPosX(), rowWidth = ImGui::GetContentRegionAvail().x;
-        ImGui::PushID(static_cast<int>(i));
-        if (ImGui::Selectable(title.c_str(), backupChoice_ == i)) backupChoice_ = i;
-        // A tagged backup keeps its date, dimmed, after the tag.
-        if (!entry.tag.empty()) {
-            ImGui::SameLine(rowX + ImGui::CalcTextSize(title.c_str()).x + 16);
-            ImGui::TextDisabled("%s", entry.timestamp.c_str());
+    // A table: the date it was saved (dimmed), the tag (bright, blank when there is none), and on the right the
+    // profile it came from, drawn as a small pill.
+    const float pillPadding = 9.f;
+    const float pillWidth = ImGui::CalcTextSize("Profile 4").x + pillPadding * 2;
+    if (!backups_.empty() && ImGui::BeginTable("BackupRows", 3, ImGuiTableFlags_ScrollY | ImGuiTableFlags_RowBg)) {
+        ImGui::TableSetupColumn("Saved", ImGuiTableColumnFlags_WidthFixed, ImGui::CalcTextSize("0000-00-00 00:00:00").x + 24.f);
+        ImGui::TableSetupColumn("Tag", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn("Profile", ImGuiTableColumnFlags_WidthFixed, pillWidth + 16.f);
+        ImGui::TableSetupScrollFreeze(0, 1);
+        const auto rightAligned = [](float width) {
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.f, ImGui::GetContentRegionAvail().x - width));
+        };
+        // Each header is centered over what its column holds: the date, the whole tag column, the pill.
+        const auto header = [](const char* text, float over, float offset) {
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + offset + std::max(0.f, (over - ImGui::CalcTextSize(text).x) / 2));
+            ImGui::TextDisabled("%s", text);
+        };
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0);
+        header("Saved", ImGui::CalcTextSize("0000-00-00 00:00:00").x, 0.f);
+        ImGui::TableSetColumnIndex(1);
+        header("Tag", ImGui::GetContentRegionAvail().x, 0.f);
+        ImGui::TableSetColumnIndex(2);
+        header("Profile", pillWidth, std::max(0.f, ImGui::GetContentRegionAvail().x - pillWidth));
+        for (std::size_t i=0; i<backups_.size(); ++i) {
+            const auto& entry = backups_[i];
+            ImGui::PushID(static_cast<int>(i));
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+            if (ImGui::Selectable(entry.timestamp.c_str(), backupChoice_ == i, ImGuiSelectableFlags_SpanAllColumns)) backupChoice_ = i;
+            ImGui::PopStyleColor();
+            ImGui::TableSetColumnIndex(1);
+            ImGui::TextUnformatted(entry.tag.c_str());
+            ImGui::TableSetColumnIndex(2);
+            const auto profile = "Profile " + std::to_string(entry.profile + 1);
+            const ImVec2 size(pillWidth, ImGui::GetTextLineHeight() + 2.f);
+            rightAligned(size.x);
+            const ImVec2 top = ImGui::GetCursorScreenPos(), bottom(top.x + size.x, top.y + size.y);
+            const auto& palette = theme::palette();
+            auto* draw = ImGui::GetWindowDrawList();
+            draw->AddRectFilled(top, bottom, palette.keyFill, size.y / 2);
+            draw->AddRect(top, bottom, palette.keyBorder, size.y / 2);
+            const float textWidth = ImGui::CalcTextSize(profile.c_str()).x;
+            draw->AddText(ImVec2(top.x + (size.x - textWidth) / 2, top.y + 1.f), ImGui::GetColorU32(ImGuiCol_Text), profile.c_str());
+            ImGui::Dummy(size);
+            ImGui::PopID();
         }
-        // The profile sits in its own right-hand column, dimmed, on the same line as the date.
-        ImGui::SameLine(rowX + rowWidth - ImGui::CalcTextSize(profile.c_str()).x - 8);
-        ImGui::TextDisabled("%s", profile.c_str());
-        ImGui::PopID();
+        ImGui::EndTable();
     }
     ImGui::EndChild();
 }
