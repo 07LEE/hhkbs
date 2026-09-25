@@ -385,7 +385,8 @@ bool MainWindow::loadBackup(const hhkbs::keymap::BackupEntry& entry)
         savedBytes_ = keymap_.toBytes();
         loaded_ = true;
         selectedProfile_ = entry.profile;
-        summary_ = "Backup of Profile " + std::to_string(entry.profile + 1) + " from " + entry.timestamp;
+        summary_ = std::string("Backup ") + (entry.tag.empty() ? "" : "\"" + entry.tag + "\" ") + "of Profile " +
+                   std::to_string(entry.profile + 1) + " from " + entry.timestamp;
         status_ = "Loaded backup";
         message_.clear();
         finishDialog();
@@ -525,7 +526,7 @@ void MainWindow::saveBackupTag()
 void MainWindow::drawCleanBackups()
 {
     dialog::title("Clean up backups");
-    dialog::hint("Keep the newest backups of each profile and delete the rest. This cannot be undone.");
+    dialog::hint("Keep the newest backups of each profile and delete the rest. Tagged ones are kept.");
     ImGui::AlignTextToFramePadding();
     ImGui::TextUnformatted("Keep the newest");
     ImGui::SameLine();
@@ -558,7 +559,8 @@ void MainWindow::drawDeleteBackup()
 {
     const auto& entry = backups_[*backupChoice_];
     dialog::title("Delete backup");
-    ImGui::TextWrapped("Delete the backup of Profile %d saved on %s? This cannot be undone.", entry.profile + 1, entry.timestamp.c_str());
+    const std::string named = entry.tag.empty() ? "" : "\"" + entry.tag + "\" ";
+    ImGui::TextWrapped("Delete the backup %sof Profile %d saved on %s? This cannot be undone.", named.c_str(), entry.profile + 1, entry.timestamp.c_str());
     dialog::error(dialogError_);
     const int hit = dialog::footer({{"Back"}, {"Delete backup", false, true}});
     if (hit == 0) { dialog_ = Dialog::Backups; selectManageTab_ = true; }

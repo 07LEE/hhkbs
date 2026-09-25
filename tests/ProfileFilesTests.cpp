@@ -89,6 +89,14 @@ int main() {
             throw std::runtime_error("Cleanup should drop only the oldest backups of each profile");
         if (!backupsBeyondNewest(ordered, 4).empty()) throw std::runtime_error("Nothing should go when everything fits");
         if (backupsBeyondNewest(ordered, 0).size() != ordered.size()) throw std::runtime_error("Keeping none drops all");
+        // A tagged backup was kept on purpose: cleanup never drops it, and it does not use up a place.
+        auto keeper = entry(0, "4");
+        keeper.tag = "before the macro";
+        const std::vector<BackupEntry> withTag{entry(0, "5"), keeper, entry(0, "3"), entry(0, "2")};
+        const auto untaggedSurplus = backupsBeyondNewest(withTag, 1);
+        if (untaggedSurplus.size() != 2 || untaggedSurplus[0].timestamp != "3" || untaggedSurplus[1].timestamp != "2")
+            throw std::runtime_error("Cleanup should skip a tagged backup and not count it");
+        if (backupsBeyondNewest(withTag, 0).size() != 3) throw std::runtime_error("Keeping none must still spare the tagged one");
         if (!listBackups(directory / "missing").empty()) throw std::runtime_error("Missing folder should list nothing");
         if (backupFileName(0, 0).find("-profile1.toml") == std::string::npos)
             throw std::runtime_error("Backup file names use the 1-based profile number");

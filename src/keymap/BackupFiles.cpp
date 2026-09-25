@@ -89,8 +89,10 @@ std::vector<BackupEntry> backupsBeyondNewest(const std::vector<BackupEntry>& new
 {
     std::map<std::uint16_t, std::size_t> seen;
     std::vector<BackupEntry> surplus;
-    for (const auto& entry : newestFirst)
+    for (const auto& entry : newestFirst) {
+        if (!entry.tag.empty()) continue;
         if (seen[entry.profile]++ >= keepPerProfile) surplus.push_back(entry);
+    }
     return surplus;
 }
 

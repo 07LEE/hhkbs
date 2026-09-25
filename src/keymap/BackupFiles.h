@@ -25,7 +25,8 @@ inline constexpr std::size_t maxBackupTagLength = 40;  // characters
 // Backups in the directory, newest first. Files with any other name are ignored.
 [[nodiscard]] std::vector<BackupEntry> listBackups(const std::filesystem::path& directory);
 
-// Backups that fall outside the newest `keepPerProfile` of their own profile. Expects newest first.
+// Backups that fall outside the newest `keepPerProfile` of their own profile. Expects newest first. A backup with a
+// tag was kept on purpose: it is never returned, and does not count towards the ones to keep.
 [[nodiscard]] std::vector<BackupEntry> backupsBeyondNewest(const std::vector<BackupEntry>& newestFirst,
                                                             std::size_t keepPerProfile);
 
