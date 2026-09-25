@@ -14,6 +14,10 @@ using Report = std::array<std::uint8_t, 32>;
 class Transport {
 public:
     virtual ~Transport() = default;
+
+    // Bluetooth lays out some answers differently from USB, and a request to switch profiles has not been checked
+    // there.
+    [[nodiscard]] virtual bool isBluetooth() const { return false; }
     [[nodiscard]] virtual Report exchange(const Report& request) = 0;
 
     // Some commands answer with more than one report. Every answer must be read,

@@ -40,16 +40,20 @@ std::string keyName(std::size_t slot)
     return "Key " + std::to_string(slot);
 }
 
-std::unique_ptr<hhkbs::device::HidrawTransport> openStudio()
+// With usbOnly, a Bluetooth connection is passed over: writing a profile is only done over the cable.
+std::unique_ptr<hhkbs::device::HidrawTransport> openStudio(const bool usbOnly = false)
 {
+    bool skippedBluetooth = false;
     for (const auto& item : hhkbs::device::DeviceDiscovery::findHhkbStudioInterfaces()) {
         if (!item.canReadWrite) continue;
+        if (usbOnly && item.bluetooth) { skippedBluetooth = true; continue; }
         try {
             auto transport = std::make_unique<hhkbs::device::HidrawTransport>(item.path);
             if (hhkbs::device::HhkbStudioDevice(*transport).readProductName() == "HHKB-Studio")
                 return transport;
         } catch (const std::exception&) {}
     }
+    if (skippedBluetooth) throw std::runtime_error("Applying needs a USB connection. Connect the keyboard with a cable.");
     throw std::runtime_error("No writable HHKB Studio was found. Check the connection and udev rules.");
 }
 
@@ -112,8 +116,8 @@ void MainWindow::beginScan(std::optional<std::uint16_t> target, const bool recon
         status_ = "Searching...";
         message_ = "Checking available HID interfaces...";
     }
-    scan_ = std::async(std::launch::async, [target] {
-        ScanResult result{"No device", "Connect an HHKB Studio, import a TOML profile, or start with --demo.", {}, std::nullopt, {}, {}};
+    scan_ = std::async(std::launch::async, [target, reconnect] {
+        ScanResult result{"No device", "Connect an HHKB Studio, import a TOML profile, or start with --demo.", {}, std::nullopt, {}, false, {}};
         try {
             const auto devices = hhkbs::device::DeviceDiscovery::findHhkbStudioInterfaces();
             bool permission = false;
@@ -124,11 +128,22 @@ void MainWindow::beginScan(std::optional<std::uint16_t> target, const bool recon
                     hhkbs::device::HidrawTransport transport(item.path);
                     hhkbs::device::HhkbStudioDevice device(transport);
                     if (device.readProductName() != "HHKB-Studio") continue;
+                    if (reconnect) {
+                        // Only bring the connection back; the profile is read when the user asks for it.
+                        result.path = item.path;
+                        result.bluetooth = item.bluetooth;
+                        for (std::size_t pad = 0; pad < result.pads.size(); ++pad) {
+                            try { result.pads[pad] = device.padState(pad); } catch (const std::exception&) {}
+                        }
+                        result.status = "Connected";
+                        return result;
+                    }
                     const auto info = device.readInformation();
                     const auto profile = target.value_or(info.currentProfile);
                     result.bytes = device.readProfile(profile);
                     result.profile = profile;
                     result.path = item.path;
+                    result.bluetooth = item.bluetooth;
                     for (std::size_t pad = 0; pad < result.pads.size(); ++pad) {
                         try { result.pads[pad] = device.padState(pad); } catch (const std::exception&) {}
                     }
@@ -160,22 +175,31 @@ void MainWindow::pollScan()
     if (!scan_.valid() || scan_.wait_for(std::chrono::seconds(0)) != std::future_status::ready) return;
     try {
         auto result = scan_.get();
-        // A probe that finds nothing keeps trying; it only speaks up when the keyboard is there but unusable.
-        if (reconnectScan_ && result.bytes.empty()) {
-            if (result.status != "No device") { status_ = result.status; message_ = result.detail; }
+        if (reconnectScan_) {
+            // A probe that finds nothing keeps trying; it only speaks up when the keyboard is there but unusable.
+            if (result.path.empty()) {
+                if (result.status != "No device") { status_ = result.status; message_ = result.detail; }
+                return;
+            }
+            // The editor content is left alone, edited or not.
+            disconnected_ = false;
+            bluetooth_ = result.bluetooth;
+            status_ = result.status;
+            message_.clear();
+            pads_.start(result.path);
+            wasListening_ = true;
+            for (std::size_t pad = 0; pad < result.pads.size(); ++pad)
+                if (result.pads[pad]) pads_.set(pad, *result.pads[pad]);
             return;
         }
         status_ = result.status;
         message_ = result.detail;
         if (!result.bytes.empty()) {
-            // After a reconnect, edits that were not applied yet stay as they are.
-            if (!(reconnectScan_ && unsaved())) {
-                Keymap profile(result.bytes);
-                keymap_ = std::move(profile);
-                savedBytes_ = keymap_.toBytes();
-                loaded_ = true;
-                selectedProfile_ = result.profile;
-            }
+            Keymap profile(result.bytes);
+            keymap_ = std::move(profile);
+            savedBytes_ = keymap_.toBytes();
+            loaded_ = true;
+            selectedProfile_ = result.profile;
             disconnected_ = false;
             if (!result.path.empty()) {
                 pads_.start(result.path);
@@ -225,6 +249,13 @@ void MainWindow::pollConnection()
     if (disconnected_) {
         const auto now = std::chrono::steady_clock::now();
         if (now < nextProbe_) return;
+        nextProbe_ = now + std::chrono::seconds(1);
+        // Looking at the interfaces costs the keyboard nothing. A freshly connected keyboard is left alone until
+        // they have stopped changing for a few seconds; talking to it while it is still coming up can freeze it.
+        std::vector<std::filesystem::path> paths;
+        for (const auto& item : hhkbs::device::DeviceDiscovery::findHhkbStudioInterfaces()) paths.push_back(item.path);
+        if (paths != seenPaths_) { seenPaths_ = paths; settledAt_ = now + std::chrono::seconds(3); }
+        if (paths.empty() || now < settledAt_) return;
         nextProbe_ = now + std::chrono::seconds(2);
         beginScan(selectedProfile_, true);
         return;
@@ -232,9 +263,10 @@ void MainWindow::pollConnection()
     if (!wasListening_ || pads_.listening()) return;
     wasListening_ = false;
     disconnected_ = true;
-    nextProbe_ = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    seenPaths_.clear();
+    nextProbe_ = std::chrono::steady_clock::now() + std::chrono::seconds(1);
     status_ = "Disconnected";
-    message_ = "The keyboard connection was lost. It reconnects by itself when the keyboard is back.";
+    message_ = "The keyboard connection was lost. It reconnects by itself; press the refresh button to read the profile again.";
 }
 
 void MainWindow::beginApply()
@@ -247,7 +279,7 @@ void MainWindow::beginApply()
     apply_ = std::async(std::launch::async, [bytes = std::move(bytes), profile] {
         ApplyResult result{false, {}, bytes, 0};
         try {
-            auto transport = openStudio();
+            auto transport = openStudio(true);
             hhkbs::device::HhkbStudioDevice device(*transport);
             std::filesystem::path path;
             device.runOnProfile(profile, [&] {
@@ -850,7 +882,12 @@ void MainWindow::draw()
         const bool selected = selectedProfile_ && *selectedProfile_ == i;
         if (selected) ImGui::PushStyleColor(ImGuiCol_Button, theme::palette().selected);
         const auto label = "Profile " + std::to_string(i+1);
+        // Over Bluetooth only the profile the keyboard is on can be read.
+        const bool usbOnly = bluetooth_ && !selected;
+        ImGui::BeginDisabled(usbOnly);
         if (ImGui::Button(label.c_str(), ImVec2(96,32))) selectProfile(i);
+        ImGui::EndDisabled();
+        if (usbOnly) ImGui::SetItemTooltip("Other profiles can be read over USB");
         if (selected) ImGui::PopStyleColor();
     }
     // Re-reads the profile the keyboard is using; it replaces the editor content, so unsaved edits are confirmed first.
@@ -914,9 +951,10 @@ void MainWindow::draw()
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, theme::palette().accentHovered);
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, theme::palette().accentActive);
     ImGui::PushStyleColor(ImGuiCol_Text, theme::palette().accentText);
-    ImGui::BeginDisabled(!loaded_ || demo_ || busy);
+    ImGui::BeginDisabled(!loaded_ || demo_ || busy || bluetooth_);
     if (ImGui::Button("Apply to keyboard")) openApply();
     ImGui::EndDisabled();
+    if (bluetooth_) ImGui::SetItemTooltip("Applying needs a USB connection");
     ImGui::PopStyleColor(4);
     drawDialog();
     ImGui::End();

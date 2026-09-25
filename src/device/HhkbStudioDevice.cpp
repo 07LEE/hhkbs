@@ -54,9 +54,19 @@ std::vector<std::uint8_t> HhkbStudioDevice::readCurrentProfile()
 
 std::uint16_t HhkbStudioDevice::activeProfile()
 {
-    return protocol::decodeBigEndian16(
-        readProperty(protocol::Property::CurrentProfile),
-        protocol::textPayloadOffset);
+    const auto response = readProperty(protocol::Property::CurrentProfile);
+    if (!transport_.isBluetooth()) {
+        return protocol::decodeBigEndian16(response, protocol::textPayloadOffset);
+    }
+    // Over Bluetooth: 02 11 01 <x> <profile>, the profile counted from 0 as over USB. <x> was 01 on the first
+    // Bluetooth slot (USB has 00); it is not used here.
+    const auto profile = response[protocol::textPayloadOffset + 1];
+    if (profile >= protocol::profileCount) {
+        throw DeviceError(
+            DeviceErrorCode::Protocol,
+            "HHKB Studio reported an unexpected profile over Bluetooth");
+    }
+    return profile;
 }
 
 std::vector<std::uint8_t> HhkbStudioDevice::readProfile(const std::uint16_t profile)
@@ -145,6 +155,11 @@ void HhkbStudioDevice::setPadState(const std::size_t pad, const bool on)
 
 void HhkbStudioDevice::switchProfile(const std::uint16_t profile)
 {
+    if (transport_.isBluetooth()) {
+        throw DeviceError(
+            DeviceErrorCode::Protocol,
+            "Switching profiles needs a USB connection");
+    }
     const auto responses = transport_.exchange(
         protocol::encodeProfileSwitchRequest(profile),
         protocol::profileSwitchResponseCount);

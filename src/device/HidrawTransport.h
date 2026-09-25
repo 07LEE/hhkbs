@@ -3,7 +3,9 @@
 #include "device/Transport.h"
 
 #include <chrono>
+#include <cstdint>
 #include <filesystem>
+#include <optional>
 
 namespace hhkbs::device {
 
@@ -19,6 +21,8 @@ public:
     HidrawTransport(HidrawTransport&&) = delete;
     HidrawTransport& operator=(HidrawTransport&&) = delete;
 
+    // The connection that puts a Report ID on the configuration reports is the Bluetooth one.
+    [[nodiscard]] bool isBluetooth() const override { return reportId_.has_value(); }
     [[nodiscard]] Report exchange(const Report& request) override;
     [[nodiscard]] std::vector<Report> exchange(
         const Report& request,
@@ -32,6 +36,7 @@ private:
     [[nodiscard]] Report readResponse(const Report& request) const;
 
     int fileDescriptor_{-1};
+    std::optional<std::uint8_t> reportId_;  // set when the configuration reports carry a Report ID (Bluetooth)
     std::filesystem::path path_;
     std::chrono::milliseconds timeout_;
 };

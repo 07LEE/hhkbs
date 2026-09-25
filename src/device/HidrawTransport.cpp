@@ -2,13 +2,16 @@
 
 #include "device/DeviceError.h"
 #include "device/HhkbProtocol.h"
+#include "device/HidDescriptor.h"
 
+#include <array>
 #include <cerrno>
 #include <cstring>
 #include <fcntl.h>
 #include <poll.h>
 #include <string>
 #include <unistd.h>
+#include <vector>
 
 namespace hhkbs::device {
 namespace {
@@ -33,6 +36,7 @@ HidrawTransport::HidrawTransport(
 {
     fileDescriptor_ = ::open(path.c_str(), O_RDWR | O_CLOEXEC | O_NONBLOCK);
     if (fileDescriptor_ >= 0) {
+        reportId_ = readConfigurationReportId(fileDescriptor_);
         return;
     }
 
@@ -109,13 +113,17 @@ void HidrawTransport::waitFor(const short events) const
 
 void HidrawTransport::writeReport(const Report& report) const
 {
+    std::vector<std::uint8_t> packet;
+    if (reportId_) packet.push_back(*reportId_);
+    packet.insert(packet.end(), report.begin(), report.end());
+
     std::size_t offset = 0;
-    while (offset < report.size()) {
+    while (offset < packet.size()) {
         waitFor(POLLOUT);
         const auto written = ::write(
             fileDescriptor_,
-            report.data() + offset,
-            report.size() - offset);
+            packet.data() + offset,
+            packet.size() - offset);
         if (written > 0) {
             offset += static_cast<std::size_t>(written);
             continue;
@@ -129,16 +137,17 @@ void HidrawTransport::writeReport(const Report& report) const
 
 Report HidrawTransport::readReport() const
 {
-    Report report{};
-    std::size_t offset = 0;
-    while (offset < report.size()) {
+    // One read() returns one whole report. Over Bluetooth the same node also delivers key and mouse reports,
+    // which are skipped.
+    std::array<std::uint8_t, Report{}.size() + 1> packet{};
+    for (;;) {
         waitFor(POLLIN);
-        const auto count = ::read(
-            fileDescriptor_,
-            report.data() + offset,
-            report.size() - offset);
+        const auto count = ::read(fileDescriptor_, packet.data(), packet.size());
         if (count > 0) {
-            offset += static_cast<std::size_t>(count);
+            Report report{};
+            if (extractConfigurationReport({packet.data(), static_cast<std::size_t>(count)}, reportId_, report)) {
+                return report;
+            }
             continue;
         }
         if (count < 0 && (errno == EAGAIN || errno == EINTR)) {
@@ -151,7 +160,6 @@ Report HidrawTransport::readReport() const
         }
         throw makeIoError(DeviceErrorCode::InputOutput, path_, "could not read from");
     }
-    return report;
 }
 
 }  // namespace hhkbs::device

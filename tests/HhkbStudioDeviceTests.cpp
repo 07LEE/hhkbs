@@ -637,6 +637,90 @@ void supportedInterfacesAreDiscovered()
         "hidraw device path was assembled incorrectly");
 }
 
+// Answers like the keyboard over Bluetooth: 02 11 01 <slot> <profile>.
+class BluetoothTransport final : public Transport {
+public:
+    [[nodiscard]] bool isBluetooth() const override { return true; }
+    [[nodiscard]] Report exchange(const Report& request) override
+    {
+        if (request[0] == 0x03) sentWrite = true;
+        Report response{};
+        response[0] = 0x02;
+        response[1] = request[1];
+        response[2] = request[2];
+        response[3] = slot;
+        response[4] = profile;
+        return response;
+    }
+
+    std::uint8_t slot = 1;
+    std::uint8_t profile = 0;
+    bool sentWrite = false;
+};
+
+void bluetoothProfileIsRead()
+{
+    BluetoothTransport transport;
+    HhkbStudioDevice device(transport);
+    for (std::uint8_t slot = 1; slot <= 4; ++slot) {
+        transport.slot = slot;
+        for (std::uint8_t profile = 0; profile < 4; ++profile) {
+            transport.profile = profile;
+            require(device.activeProfile() == profile, "the Bluetooth profile was read wrongly");
+        }
+    }
+
+    transport.profile = 4;
+    bool rejected = false;
+    try {
+        static_cast<void>(device.activeProfile());
+    } catch (const hhkbs::device::DeviceError&) {
+        rejected = true;
+    }
+    require(rejected, "a profile beyond 4 should be rejected");
+
+    transport.profile = 0;
+    bool refused = false;
+    try {
+        static_cast<void>(device.readProfile(1));
+    } catch (const hhkbs::device::DeviceError&) {
+        refused = true;
+    }
+    require(refused, "switching profiles over Bluetooth should be refused");
+    require(!transport.sentWrite, "no switch request may be sent over Bluetooth");
+}
+
+void bluetoothInterfacesAreTold()
+{
+    const auto root = std::filesystem::temp_directory_path()
+        / ("hhkbs-device-bluetooth-" + std::to_string(::getpid()));
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root / "hidraw-test-usb" / "device");
+    std::filesystem::create_directories(root / "hidraw-test-bluetooth" / "device");
+
+    {
+        std::ofstream uevent(root / "hidraw-test-usb" / "device" / "uevent");
+        uevent << "HID_ID=0003:000004FE:00000016\n"
+               << "HID_NAME=HHKB-Studio\n";
+    }
+    {
+        std::ofstream uevent(root / "hidraw-test-bluetooth" / "device" / "uevent");
+        uevent << "HID_ID=0005:000004FE:00000016\n"
+               << "HID_NAME=HHKB-Studio\n";
+    }
+
+    const auto interfaces =
+        hhkbs::device::DeviceDiscovery::findHhkbStudioInterfaces(root);
+    std::filesystem::remove_all(root);
+
+    require(interfaces.size() == 2, "both connections should be found");
+    for (const auto& item : interfaces) {
+        require(
+            item.bluetooth == (item.path == "/dev/hidraw-test-bluetooth"),
+            "only the Bluetooth connection should be marked as Bluetooth");
+    }
+}
+
 }  // namespace
 
 int main()
@@ -644,6 +728,8 @@ int main()
     try {
         informationCommandsAreDecoded();
         padNotificationsAreDecoded();
+        bluetoothInterfacesAreTold();
+        bluetoothProfileIsRead();
         gesturePadsAreReadAndSwitched();
         padMonitorFollowsNotifications();
         protocolPacketsAreEncodedAndDecoded();
