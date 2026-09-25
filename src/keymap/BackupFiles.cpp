@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <fstream>
 #include <map>
 #include <optional>
 #include <stdexcept>
@@ -28,6 +29,21 @@ std::string backupFileName(const std::time_t when, const std::uint16_t profile)
 }
 
 namespace {
+
+std::filesystem::path tagPath(std::filesystem::path backup)
+{
+    backup += ".tag";
+    return backup;
+}
+
+std::string readTag(const std::filesystem::path& backup)
+{
+    std::ifstream file(tagPath(backup));
+    std::string tag;
+    std::getline(file, tag);
+    while (!tag.empty() && (tag.back() == '\r' || tag.back() == ' ')) tag.pop_back();
+    return tag;
+}
 
 std::optional<BackupEntry> parse(const std::filesystem::path& path)
 {
@@ -56,7 +72,10 @@ std::vector<BackupEntry> listBackups(const std::filesystem::path& directory)
     while (!error && it != end) {
         std::error_code status;
         if (it->is_regular_file(status) && !status)
-            if (auto entry = parse(it->path())) entries.push_back(std::move(*entry));
+            if (auto entry = parse(it->path())) {
+                entry->tag = readTag(entry->path);
+                entries.push_back(std::move(*entry));
+            }
         it.increment(error);
     }
     std::sort(entries.begin(), entries.end(), [](const BackupEntry& a, const BackupEntry& b) {
@@ -75,6 +94,48 @@ std::vector<BackupEntry> backupsBeyondNewest(const std::vector<BackupEntry>& new
     return surplus;
 }
 
+void setBackupTag(const std::filesystem::path& directory, const BackupEntry& entry, const std::string& tag)
+{
+    std::error_code status;
+    if (entry.path.parent_path() != directory || !parse(entry.path) || !std::filesystem::is_regular_file(entry.path, status))
+        throw std::invalid_argument("Not a backup file: " + entry.path.string());
+
+    const auto first = tag.find_first_not_of(' ');
+    const auto text = first == std::string::npos ? std::string() : tag.substr(first, tag.find_last_not_of(' ') - first + 1);
+    std::size_t characters = 0;
+    for (const unsigned char byte : text) {
+        if (byte < 0x20 || byte == 0x7F) throw std::invalid_argument("A tag cannot contain control characters");
+        if ((byte & 0xC0) != 0x80) ++characters;  // count UTF-8 characters, not bytes
+    }
+    if (characters > maxBackupTagLength)
+        throw std::invalid_argument("A tag can have at most " + std::to_string(maxBackupTagLength) + " characters");
+
+    const auto target = tagPath(entry.path);
+    std::error_code error;
+    if (text.empty()) {
+        std::filesystem::remove(target, error);
+        if (error) throw std::system_error(error, "Remove tag");
+        return;
+    }
+    // Written aside and renamed, so an interrupted write never leaves a half-written tag.
+    auto temporary = target;
+    temporary += ".tmp";
+    {
+        std::ofstream file(temporary, std::ios::binary | std::ios::trunc);
+        file << text << '\n';
+        if (!file) {
+            file.close();
+            std::filesystem::remove(temporary, error);
+            throw std::runtime_error("Could not write the tag");
+        }
+    }
+    std::filesystem::rename(temporary, target, error);
+    if (error) {
+        std::filesystem::remove(temporary);
+        throw std::system_error(error, "Save tag");
+    }
+}
+
 void deleteBackup(const std::filesystem::path& directory, const BackupEntry& entry)
 {
     if (entry.path.parent_path() != directory || !parse(entry.path))
@@ -83,6 +144,7 @@ void deleteBackup(const std::filesystem::path& directory, const BackupEntry& ent
     if (!std::filesystem::remove(entry.path, error) && !error)
         error = std::make_error_code(std::errc::no_such_file_or_directory);
     if (error) throw std::system_error(error, "Delete backup");
+    std::filesystem::remove(tagPath(entry.path), error);  // a missing note is fine
 }
 
 }  // namespace hhkbs::keymap
