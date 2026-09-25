@@ -4,6 +4,7 @@
 #include "keymap/BackupFiles.h"
 #include "keymap/Keymap.h"
 #include <array>
+#include <chrono>
 #include <filesystem>
 #include <future>
 #include <optional>
@@ -39,11 +40,12 @@ private:
         std::vector<std::uint8_t> bytes;
         std::uint16_t profile = 0;
     };
-    void beginScan(std::optional<std::uint16_t> profile = std::nullopt);
+    void beginScan(std::optional<std::uint16_t> profile = std::nullopt, bool reconnect = false);
     void selectProfile(std::uint16_t profile);
     void pollScan();
     void beginPadChange(std::size_t pad, bool on);
     void pollPadChange();
+    void pollConnection();
     void beginApply();
     void pollApply();
     [[nodiscard]] bool busy() const { return scan_.valid() || apply_.valid() || pad_.valid(); }
@@ -91,6 +93,10 @@ private:
     bool loaded_ = false;
     bool close_ = false;
     hhkbs::device::PadMonitor pads_;  // gesture pad on/off as the keyboard reports it
+    bool wasListening_ = false;       // the monitor was running, so it stopping means the keyboard went away
+    bool disconnected_ = false;       // the keyboard went away; scans run quietly until it answers again
+    bool reconnectScan_ = false;      // the running scan is such a probe: it must not replace unsaved edits
+    std::chrono::steady_clock::time_point nextProbe_;
     std::size_t layer_ = 0;
     std::size_t slot_ = 0;
     Dialog dialog_ = Dialog::None;

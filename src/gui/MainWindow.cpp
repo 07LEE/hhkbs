@@ -104,11 +104,14 @@ void MainWindow::refreshBackupCount()
 
 bool MainWindow::unsaved() const { return loaded_ && keymap_.toBytes() != savedBytes_; }
 
-void MainWindow::beginScan(std::optional<std::uint16_t> target)
+void MainWindow::beginScan(std::optional<std::uint16_t> target, const bool reconnect)
 {
     if (scan_.valid()) return;
-    status_ = "Searching...";
-    message_ = "Checking available HID interfaces...";
+    reconnectScan_ = reconnect;
+    if (!reconnect) {
+        status_ = "Searching...";
+        message_ = "Checking available HID interfaces...";
+    }
     scan_ = std::async(std::launch::async, [target] {
         ScanResult result{"No device", "Connect an HHKB Studio, import a TOML profile, or start with --demo.", {}, std::nullopt, {}, {}};
         try {
@@ -157,16 +160,26 @@ void MainWindow::pollScan()
     if (!scan_.valid() || scan_.wait_for(std::chrono::seconds(0)) != std::future_status::ready) return;
     try {
         auto result = scan_.get();
+        // A probe that finds nothing keeps trying; it only speaks up when the keyboard is there but unusable.
+        if (reconnectScan_ && result.bytes.empty()) {
+            if (result.status != "No device") { status_ = result.status; message_ = result.detail; }
+            return;
+        }
         status_ = result.status;
         message_ = result.detail;
         if (!result.bytes.empty()) {
-            Keymap profile(result.bytes);
-            keymap_ = std::move(profile);
-            savedBytes_ = keymap_.toBytes();
-            loaded_ = true;
-            selectedProfile_ = result.profile;
+            // After a reconnect, edits that were not applied yet stay as they are.
+            if (!(reconnectScan_ && unsaved())) {
+                Keymap profile(result.bytes);
+                keymap_ = std::move(profile);
+                savedBytes_ = keymap_.toBytes();
+                loaded_ = true;
+                selectedProfile_ = result.profile;
+            }
+            disconnected_ = false;
             if (!result.path.empty()) {
                 pads_.start(result.path);
+                wasListening_ = true;
                 for (std::size_t pad = 0; pad < result.pads.size(); ++pad)
                     if (result.pads[pad]) pads_.set(pad, *result.pads[pad]);
             }
@@ -203,6 +216,25 @@ void MainWindow::pollPadChange()
         status_ = "Pad change failed";
         message_ = result.message;
     }
+}
+
+void MainWindow::pollConnection()
+{
+    // Writes reopen the interface and may briefly disturb the listener, so only judge while nothing is running.
+    if (busy()) return;
+    if (disconnected_) {
+        const auto now = std::chrono::steady_clock::now();
+        if (now < nextProbe_) return;
+        nextProbe_ = now + std::chrono::seconds(2);
+        beginScan(selectedProfile_, true);
+        return;
+    }
+    if (!wasListening_ || pads_.listening()) return;
+    wasListening_ = false;
+    disconnected_ = true;
+    nextProbe_ = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    status_ = "Disconnected";
+    message_ = "The keyboard connection was lost. It reconnects by itself when the keyboard is back.";
 }
 
 void MainWindow::beginApply()
@@ -760,6 +792,7 @@ void MainWindow::draw()
     pollScan();
     pollApply();
     pollPadChange();
+    pollConnection();
     const bool busy = this->busy();
     auto* viewport = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(viewport->WorkPos);
