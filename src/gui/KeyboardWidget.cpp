@@ -160,7 +160,7 @@ std::optional<std::size_t> drawKeyboard(const hhkbs::keymap::Keymap& keymap,
         }
     }
     if (!notice.empty()) {
-        const float wrap = std::min(205.f, available.x * .22f);
+        const float wrap = std::max(1.f, available.x - 4.f);
         const auto extent = ImGui::CalcTextSize(notice.c_str(), nullptr, false, wrap);
         draw->AddText(ImGui::GetFont(), ImGui::GetFontSize(),
                       ImVec2(start.x + 2, start.y + ImGui::GetWindowHeight() - ImGui::GetStyle().WindowPadding.y * 2 + 8 - extent.y),
