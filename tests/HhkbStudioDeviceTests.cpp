@@ -637,10 +637,10 @@ void supportedInterfacesAreDiscovered()
         "hidraw device path was assembled incorrectly");
 }
 
-// Answers like the keyboard over Bluetooth: the profile is one byte counted from 1 (here: Profile 1).
+// Answers like the keyboard over Bluetooth: 02 11 01 01 <profile>.
 class BluetoothTransport final : public Transport {
 public:
-    [[nodiscard]] bool numbersProfilesFromOne() const override { return true; }
+    [[nodiscard]] bool isBluetooth() const override { return true; }
     [[nodiscard]] Report exchange(const Report& request) override
     {
         if (request[0] == 0x03) sentWrite = true;
@@ -648,19 +648,34 @@ public:
         response[0] = 0x02;
         response[1] = request[1];
         response[2] = request[2];
-        response[3] = 1;
+        response[3] = 0x01;
+        response[4] = profile;
         return response;
     }
 
+    std::uint8_t profile = 0;
     bool sentWrite = false;
 };
 
-void bluetoothProfilesCountFromOne()
+void bluetoothProfileIsRead()
 {
     BluetoothTransport transport;
     HhkbStudioDevice device(transport);
-    require(device.activeProfile() == 0, "Bluetooth profile 1 should be read as profile 0");
+    for (std::uint8_t profile = 0; profile < 4; ++profile) {
+        transport.profile = profile;
+        require(device.activeProfile() == profile, "the Bluetooth profile was read wrongly");
+    }
 
+    transport.profile = 4;
+    bool rejected = false;
+    try {
+        static_cast<void>(device.activeProfile());
+    } catch (const hhkbs::device::DeviceError&) {
+        rejected = true;
+    }
+    require(rejected, "a profile beyond 4 should be rejected");
+
+    transport.profile = 0;
     bool refused = false;
     try {
         static_cast<void>(device.readProfile(1));
@@ -710,7 +725,7 @@ int main()
         informationCommandsAreDecoded();
         padNotificationsAreDecoded();
         bluetoothInterfacesAreTold();
-        bluetoothProfilesCountFromOne();
+        bluetoothProfileIsRead();
         gesturePadsAreReadAndSwitched();
         padMonitorFollowsNotifications();
         protocolPacketsAreEncodedAndDecoded();

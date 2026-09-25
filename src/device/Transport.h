@@ -15,9 +15,9 @@ class Transport {
 public:
     virtual ~Transport() = default;
 
-    // Over Bluetooth the keyboard counts its profiles from 1, and a request to switch profiles has not been checked
-    // there. USB counts from 0.
-    [[nodiscard]] virtual bool numbersProfilesFromOne() const { return false; }
+    // Bluetooth lays out some answers differently from USB, and a request to switch profiles has not been checked
+    // there.
+    [[nodiscard]] virtual bool isBluetooth() const { return false; }
     [[nodiscard]] virtual Report exchange(const Report& request) = 0;
 
     // Some commands answer with more than one report. Every answer must be read,

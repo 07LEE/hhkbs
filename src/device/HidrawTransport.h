@@ -22,7 +22,7 @@ public:
     HidrawTransport& operator=(HidrawTransport&&) = delete;
 
     // The connection that puts a Report ID on the configuration reports is the Bluetooth one.
-    [[nodiscard]] bool numbersProfilesFromOne() const override { return reportId_.has_value(); }
+    [[nodiscard]] bool isBluetooth() const override { return reportId_.has_value(); }
     [[nodiscard]] Report exchange(const Report& request) override;
     [[nodiscard]] std::vector<Report> exchange(
         const Report& request,
