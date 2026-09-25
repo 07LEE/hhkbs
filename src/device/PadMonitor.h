@@ -24,6 +24,8 @@ public:
     // Starts listening on a configuration interface; does nothing if it is already listening on that path.
     void start(const std::filesystem::path& path);
     void stop();
+    // False once the listener has ended, which happens when the keyboard is unplugged or the interface fails.
+    [[nodiscard]] bool listening() const { return running_; }
     [[nodiscard]] State state(std::size_t pad) const;
     // Records a state read from the keyboard, or one this program just set.
     void set(std::size_t pad, bool on);
