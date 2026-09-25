@@ -12,7 +12,8 @@ struct FooterButton {
     bool enabled = true;
 };
 
-void title(const char* text);
+// The optional note sits dimmed on the title's baseline, to its right.
+void title(const char* text, const char* note = nullptr);
 void hint(const char* text);  // dimmed explanatory line under the title
 void error(const std::string& message);
 

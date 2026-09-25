@@ -419,13 +419,11 @@ void MainWindow::drawBackupList()
 }
 void MainWindow::drawBackups()
 {
-    dialog::title("Backups");
-    dialog::hint("A backup is saved before every apply.");
+    dialog::title("Backups", "A backup is saved before every apply.");
     if (!ImGui::BeginTabBar("BackupTabs")) return;
     const bool chosen = backupChoice_.has_value();
     if (ImGui::BeginTabItem("Restore")) {
-        dialog::hint("Choose one, then load it into the editor for the profile it came from "
-                     "or restore it to the keyboard right away.");
+        dialog::hint("Load a backup into the editor, or restore it to the keyboard.");
         drawBackupList();
         dialog::error(dialogError_);
         const int hit = dialog::footer({{"Cancel"},
@@ -440,8 +438,7 @@ void MainWindow::drawBackups()
     const auto flags = selectManageTab_ ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None;
     selectManageTab_ = false;
     if (ImGui::BeginTabItem("Manage", nullptr, flags)) {
-        dialog::hint("Tag a backup so it is easy to tell apart, or delete the ones you no longer need. "
-                     "HHKBS never deletes them on its own.");
+        dialog::hint("Tag or delete backups. HHKBS never deletes them on its own.");
         drawBackupList();
         // The tag box follows the chosen backup and starts from its current tag; saving it blank removes the tag.
         if (!chosen) { tagInput_[0] = '\0'; tagShownFor_.reset(); }

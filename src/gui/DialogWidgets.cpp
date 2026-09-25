@@ -6,11 +6,18 @@
 
 namespace dialog {
 
-void title(const char* text)
+void title(const char* text, const char* note)
 {
+    const float top = ImGui::GetCursorPosY();
     ImGui::SetWindowFontScale(1.25f);
     ImGui::TextUnformatted(text);
     ImGui::SetWindowFontScale(1.f);
+    if (!note) return;
+    // Same trick as the main header: the small text shares the title's baseline.
+    const float noteTop = top + ImGui::GetItemRectSize().y - ImGui::GetTextLineHeight() - 2.f;
+    ImGui::SameLine(0, 12.f);
+    ImGui::SetCursorPosY(noteTop);
+    ImGui::TextDisabled("%s", note);
 }
 
 void hint(const char* text)
