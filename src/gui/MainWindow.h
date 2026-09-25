@@ -57,7 +57,8 @@ private:
     void refreshBackupCount();
     void openApply();
     void drawBackups();
-    void drawBackupList();
+    void drawBackupList(float belowList);
+    void openBackupFolder();
     void requestLoadBackup(const hhkbs::keymap::BackupEntry& entry, bool thenApply);
     void drawDeleteBackup();
     void saveBackupTag();
