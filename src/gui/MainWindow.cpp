@@ -364,6 +364,7 @@ void MainWindow::openBackups(bool manage)
 {
     backups_ = hhkbs::keymap::listBackups(hhkbs::keymap::backupDirectory());
     backupChoice_.reset();
+    tagShownFor_.reset();
     backupCount_ = backups_.size();
     dialogError_.clear();
     selectManageTab_ = manage;
@@ -400,9 +401,15 @@ void MainWindow::drawBackupList()
     for (std::size_t i=0; i<backups_.size(); ++i) {
         const auto& entry = backups_[i];
         const auto profile = "Profile " + std::to_string(entry.profile + 1);
+        const std::string& title = entry.tag.empty() ? entry.timestamp : entry.tag;
         const float rowX = ImGui::GetCursorPosX(), rowWidth = ImGui::GetContentRegionAvail().x;
         ImGui::PushID(static_cast<int>(i));
-        if (ImGui::Selectable(entry.timestamp.c_str(), backupChoice_ == i)) backupChoice_ = i;
+        if (ImGui::Selectable(title.c_str(), backupChoice_ == i)) backupChoice_ = i;
+        // A tagged backup keeps its date, dimmed, after the tag.
+        if (!entry.tag.empty()) {
+            ImGui::SameLine(rowX + ImGui::CalcTextSize(title.c_str()).x + 16);
+            ImGui::TextDisabled("%s", entry.timestamp.c_str());
+        }
         // The profile sits in its own right-hand column, dimmed, on the same line as the date.
         ImGui::SameLine(rowX + rowWidth - ImGui::CalcTextSize(profile.c_str()).x - 8);
         ImGui::TextDisabled("%s", profile.c_str());
@@ -433,8 +440,26 @@ void MainWindow::drawBackups()
     const auto flags = selectManageTab_ ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None;
     selectManageTab_ = false;
     if (ImGui::BeginTabItem("Manage", nullptr, flags)) {
-        dialog::hint("Delete the backups you no longer need. HHKBS never deletes them on its own.");
+        dialog::hint("Tag a backup so it is easy to tell apart, or delete the ones you no longer need. "
+                     "HHKBS never deletes them on its own.");
         drawBackupList();
+        // The tag box follows the chosen backup and starts from its current tag; saving it blank removes the tag.
+        if (!chosen) { tagInput_[0] = '\0'; tagShownFor_.reset(); }
+        else if (tagShownFor_ != backupChoice_) {
+            std::snprintf(tagInput_.data(), tagInput_.size(), "%s", backups_[*backupChoice_].tag.c_str());
+            tagShownFor_ = backupChoice_;
+        }
+        ImGui::BeginDisabled(!chosen);
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted("Tag");
+        ImGui::SameLine();
+        const float saveWidth = ImGui::CalcTextSize("Save tag").x + ImGui::GetStyle().FramePadding.x * 2;
+        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - saveWidth - ImGui::GetStyle().ItemSpacing.x);
+        const bool entered = ImGui::InputText("##tag", tagInput_.data(), tagInput_.size(), ImGuiInputTextFlags_EnterReturnsTrue);
+        ImGui::SameLine();
+        const bool saveClicked = ImGui::Button("Save tag");
+        ImGui::EndDisabled();
+        if (chosen && (entered || saveClicked)) saveBackupTag();
         dialog::error(dialogError_);
         const int hit = dialog::footer({{"Open folder", false, false, std::filesystem::is_directory(hhkbs::keymap::backupDirectory())},
                                         {"Clean up...", false, false, !backups_.empty()},
@@ -451,6 +476,21 @@ void MainWindow::drawBackups()
         ImGui::EndTabItem();
     }
     ImGui::EndTabBar();
+}
+void MainWindow::saveBackupTag()
+{
+    if (!backupChoice_) return;
+    const auto path = backups_[*backupChoice_].path;
+    try {
+        hhkbs::keymap::setBackupTag(hhkbs::keymap::backupDirectory(), backups_[*backupChoice_], tagInput_.data());
+    } catch (const std::exception& error) { dialogError_ = error.what(); return; }
+    dialogError_.clear();
+    // Reload so the list shows the new tag, and keep the same backup chosen.
+    backups_ = hhkbs::keymap::listBackups(hhkbs::keymap::backupDirectory());
+    backupChoice_.reset();
+    tagShownFor_.reset();
+    for (std::size_t i = 0; i < backups_.size(); ++i)
+        if (backups_[i].path == path) backupChoice_ = i;
 }
 void MainWindow::drawCleanBackups()
 {

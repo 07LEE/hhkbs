@@ -60,6 +60,7 @@ private:
     void drawBackupList();
     void requestLoadBackup(const hhkbs::keymap::BackupEntry& entry, bool thenApply);
     void drawDeleteBackup();
+    void saveBackupTag();
     void drawCleanBackups();
     [[nodiscard]] bool loadBackup(const hhkbs::keymap::BackupEntry& entry);
     void drawDialog();
@@ -73,6 +74,8 @@ private:
     std::vector<std::uint8_t> savedBytes_;
     std::vector<hhkbs::keymap::BackupEntry> backups_;
     std::optional<std::size_t> backupChoice_;
+    std::array<char, 256> tagInput_{};  // the tag being edited for the chosen backup
+    std::optional<std::size_t> tagShownFor_;  // the backup tagInput_ was filled from
     std::optional<hhkbs::keymap::BackupEntry> pendingBackup_;
     bool pendingBackupApply_ = false;
     bool selectManageTab_ = false;
