@@ -97,8 +97,10 @@ private:
     bool wasListening_ = false;       // the monitor was running, so it stopping means the keyboard went away
     bool bluetooth_ = false;          // the keyboard was read over Bluetooth: applying is left to USB
     bool disconnected_ = false;       // the keyboard went away; scans run quietly until it answers again
-    bool reconnectScan_ = false;      // the running scan is such a probe: it must not replace unsaved edits
+    bool reconnectScan_ = false;      // the running scan is such a probe: it only restores the connection
     std::chrono::steady_clock::time_point nextProbe_;
+    std::vector<std::filesystem::path> seenPaths_;  // the interfaces seen at the last probe
+    std::chrono::steady_clock::time_point settledAt_;  // before this the interfaces may still be coming up
     std::size_t layer_ = 0;
     std::size_t slot_ = 0;
     Dialog dialog_ = Dialog::None;
