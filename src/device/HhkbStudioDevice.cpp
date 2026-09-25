@@ -58,9 +58,10 @@ std::uint16_t HhkbStudioDevice::activeProfile()
     if (!transport_.isBluetooth()) {
         return protocol::decodeBigEndian16(response, protocol::textPayloadOffset);
     }
-    // Over Bluetooth: 02 11 01 01 <profile>, the profile counted from 0 as over USB.
+    // Over Bluetooth: 02 11 01 <x> <profile>, the profile counted from 0 as over USB. <x> was 01 on the first
+    // Bluetooth slot (USB has 00); it is not used here.
     const auto profile = response[protocol::textPayloadOffset + 1];
-    if (response[protocol::textPayloadOffset] != 0x01 || profile >= protocol::profileCount) {
+    if (profile >= protocol::profileCount) {
         throw DeviceError(
             DeviceErrorCode::Protocol,
             "HHKB Studio reported an unexpected profile over Bluetooth");

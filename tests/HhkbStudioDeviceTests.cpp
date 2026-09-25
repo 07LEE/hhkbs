@@ -637,7 +637,7 @@ void supportedInterfacesAreDiscovered()
         "hidraw device path was assembled incorrectly");
 }
 
-// Answers like the keyboard over Bluetooth: 02 11 01 01 <profile>.
+// Answers like the keyboard over Bluetooth: 02 11 01 <slot> <profile>.
 class BluetoothTransport final : public Transport {
 public:
     [[nodiscard]] bool isBluetooth() const override { return true; }
@@ -648,11 +648,12 @@ public:
         response[0] = 0x02;
         response[1] = request[1];
         response[2] = request[2];
-        response[3] = 0x01;
+        response[3] = slot;
         response[4] = profile;
         return response;
     }
 
+    std::uint8_t slot = 1;
     std::uint8_t profile = 0;
     bool sentWrite = false;
 };
@@ -661,9 +662,12 @@ void bluetoothProfileIsRead()
 {
     BluetoothTransport transport;
     HhkbStudioDevice device(transport);
-    for (std::uint8_t profile = 0; profile < 4; ++profile) {
-        transport.profile = profile;
-        require(device.activeProfile() == profile, "the Bluetooth profile was read wrongly");
+    for (std::uint8_t slot = 1; slot <= 4; ++slot) {
+        transport.slot = slot;
+        for (std::uint8_t profile = 0; profile < 4; ++profile) {
+            transport.profile = profile;
+            require(device.activeProfile() == profile, "the Bluetooth profile was read wrongly");
+        }
     }
 
     transport.profile = 4;
