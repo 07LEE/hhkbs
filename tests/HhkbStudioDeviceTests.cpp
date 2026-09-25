@@ -637,6 +637,37 @@ void supportedInterfacesAreDiscovered()
         "hidraw device path was assembled incorrectly");
 }
 
+void bluetoothInterfacesAreTold()
+{
+    const auto root = std::filesystem::temp_directory_path()
+        / ("hhkbs-device-bluetooth-" + std::to_string(::getpid()));
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root / "hidraw-test-usb" / "device");
+    std::filesystem::create_directories(root / "hidraw-test-bluetooth" / "device");
+
+    {
+        std::ofstream uevent(root / "hidraw-test-usb" / "device" / "uevent");
+        uevent << "HID_ID=0003:000004FE:00000016\n"
+               << "HID_NAME=HHKB-Studio\n";
+    }
+    {
+        std::ofstream uevent(root / "hidraw-test-bluetooth" / "device" / "uevent");
+        uevent << "HID_ID=0005:000004FE:00000016\n"
+               << "HID_NAME=HHKB-Studio\n";
+    }
+
+    const auto interfaces =
+        hhkbs::device::DeviceDiscovery::findHhkbStudioInterfaces(root);
+    std::filesystem::remove_all(root);
+
+    require(interfaces.size() == 2, "both connections should be found");
+    for (const auto& item : interfaces) {
+        require(
+            item.bluetooth == (item.path == "/dev/hidraw-test-bluetooth"),
+            "only the Bluetooth connection should be marked as Bluetooth");
+    }
+}
+
 }  // namespace
 
 int main()
@@ -644,6 +675,7 @@ int main()
     try {
         informationCommandsAreDecoded();
         padNotificationsAreDecoded();
+        bluetoothInterfacesAreTold();
         gesturePadsAreReadAndSwitched();
         padMonitorFollowsNotifications();
         protocolPacketsAreEncodedAndDecoded();

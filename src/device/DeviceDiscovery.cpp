@@ -14,6 +14,7 @@ namespace {
 
 struct UeventData {
     std::string name;
+    std::uint16_t bus{};
     std::uint16_t vendorId{};
     std::uint16_t productId{};
     bool hasHidId{};
@@ -45,13 +46,15 @@ void parseHidId(const std::string_view value, UeventData& data)
         return;
     }
 
+    const auto bus = parseHex(value.substr(0, firstSeparator));
     const auto vendor = parseHex(
         value.substr(firstSeparator + 1, secondSeparator - firstSeparator - 1));
     const auto product = parseHex(value.substr(secondSeparator + 1));
-    if (!vendor || !product || *vendor > 0xFFFFU || *product > 0xFFFFU) {
+    if (!bus || !vendor || !product || *bus > 0xFFFFU || *vendor > 0xFFFFU || *product > 0xFFFFU) {
         return;
     }
 
+    data.bus = static_cast<std::uint16_t>(*bus);
     data.vendorId = static_cast<std::uint16_t>(*vendor);
     data.productId = static_cast<std::uint16_t>(*product);
     data.hasHidId = true;
@@ -105,6 +108,7 @@ std::vector<DeviceInfo> DeviceDiscovery::findHhkbStudioInterfaces(
             .vendorId = uevent->vendorId,
             .productId = uevent->productId,
             .canReadWrite = ::access(devicePath.c_str(), R_OK | W_OK) == 0,
+            .bluetooth = uevent->bus == busBluetooth,
         });
     }
 

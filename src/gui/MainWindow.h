@@ -26,6 +26,7 @@ private:
         std::vector<std::uint8_t> bytes;
         std::optional<std::uint16_t> profile;
         std::filesystem::path path;  // the configuration interface that answered
+        bool bluetooth = false;      // that interface is a Bluetooth connection
         std::array<std::optional<bool>, 4> pads;  // gesture pad states read from the keyboard
     };
     struct PadResult {
@@ -94,6 +95,7 @@ private:
     bool close_ = false;
     hhkbs::device::PadMonitor pads_;  // gesture pad on/off as the keyboard reports it
     bool wasListening_ = false;       // the monitor was running, so it stopping means the keyboard went away
+    bool bluetooth_ = false;          // the keyboard was read over Bluetooth: applying is left to USB
     bool disconnected_ = false;       // the keyboard went away; scans run quietly until it answers again
     bool reconnectScan_ = false;      // the running scan is such a probe: it must not replace unsaved edits
     std::chrono::steady_clock::time_point nextProbe_;

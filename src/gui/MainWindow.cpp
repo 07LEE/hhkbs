@@ -40,16 +40,20 @@ std::string keyName(std::size_t slot)
     return "Key " + std::to_string(slot);
 }
 
-std::unique_ptr<hhkbs::device::HidrawTransport> openStudio()
+// With usbOnly, a Bluetooth connection is passed over: writing a profile is only done over the cable.
+std::unique_ptr<hhkbs::device::HidrawTransport> openStudio(const bool usbOnly = false)
 {
+    bool skippedBluetooth = false;
     for (const auto& item : hhkbs::device::DeviceDiscovery::findHhkbStudioInterfaces()) {
         if (!item.canReadWrite) continue;
+        if (usbOnly && item.bluetooth) { skippedBluetooth = true; continue; }
         try {
             auto transport = std::make_unique<hhkbs::device::HidrawTransport>(item.path);
             if (hhkbs::device::HhkbStudioDevice(*transport).readProductName() == "HHKB-Studio")
                 return transport;
         } catch (const std::exception&) {}
     }
+    if (skippedBluetooth) throw std::runtime_error("Applying needs a USB connection. Connect the keyboard with a cable.");
     throw std::runtime_error("No writable HHKB Studio was found. Check the connection and udev rules.");
 }
 
@@ -113,7 +117,7 @@ void MainWindow::beginScan(std::optional<std::uint16_t> target, const bool recon
         message_ = "Checking available HID interfaces...";
     }
     scan_ = std::async(std::launch::async, [target] {
-        ScanResult result{"No device", "Connect an HHKB Studio, import a TOML profile, or start with --demo.", {}, std::nullopt, {}, {}};
+        ScanResult result{"No device", "Connect an HHKB Studio, import a TOML profile, or start with --demo.", {}, std::nullopt, {}, false, {}};
         try {
             const auto devices = hhkbs::device::DeviceDiscovery::findHhkbStudioInterfaces();
             bool permission = false;
@@ -129,6 +133,7 @@ void MainWindow::beginScan(std::optional<std::uint16_t> target, const bool recon
                     result.bytes = device.readProfile(profile);
                     result.profile = profile;
                     result.path = item.path;
+                    result.bluetooth = item.bluetooth;
                     for (std::size_t pad = 0; pad < result.pads.size(); ++pad) {
                         try { result.pads[pad] = device.padState(pad); } catch (const std::exception&) {}
                     }
@@ -247,7 +252,7 @@ void MainWindow::beginApply()
     apply_ = std::async(std::launch::async, [bytes = std::move(bytes), profile] {
         ApplyResult result{false, {}, bytes, 0};
         try {
-            auto transport = openStudio();
+            auto transport = openStudio(true);
             hhkbs::device::HhkbStudioDevice device(*transport);
             std::filesystem::path path;
             device.runOnProfile(profile, [&] {
@@ -914,9 +919,10 @@ void MainWindow::draw()
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, theme::palette().accentHovered);
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, theme::palette().accentActive);
     ImGui::PushStyleColor(ImGuiCol_Text, theme::palette().accentText);
-    ImGui::BeginDisabled(!loaded_ || demo_ || busy);
+    ImGui::BeginDisabled(!loaded_ || demo_ || busy || bluetooth_);
     if (ImGui::Button("Apply to keyboard")) openApply();
     ImGui::EndDisabled();
+    if (bluetooth_) ImGui::SetItemTooltip("Applying needs a USB connection");
     ImGui::PopStyleColor(4);
     drawDialog();
     ImGui::End();
