@@ -28,7 +28,7 @@ sudo udevadm trigger
 3. Select a key, mouse button, or gesture-pad direction and assign a function.
 4. Choose Apply to keyboard, or Export to save the profile as TOML.
 
-Each gesture pad has an On/Off button beside it. HHKBS reads the state from the keyboard and switches it right away; this takes effect immediately and is not part of the profile. The button follows the keyboard when a pad is switched with a Pad On, Off or Toggle key.
+Each gesture pad has an On/Off button beside it. HHKBS reads the state from the keyboard and switches it right away. The state belongs to the keyboard as a whole, not to a profile, so it is not saved with a profile or by Apply. The button also follows the pad when it is switched on the keyboard with a Pad On, Off or Toggle key.
 
 Apply saves the profile currently on the keyboard to `~/.local/state/hhkbs/backups/` before writing. Backups lists them so one can be restored. Do not unplug the keyboard while it is being written.
 
