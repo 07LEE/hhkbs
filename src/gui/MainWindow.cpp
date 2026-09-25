@@ -160,8 +160,11 @@ void MainWindow::pollScan()
     if (!scan_.valid() || scan_.wait_for(std::chrono::seconds(0)) != std::future_status::ready) return;
     try {
         auto result = scan_.get();
-        // A probe that finds nothing leaves the "Disconnected" notice alone and tries again later.
-        if (reconnectScan_ && result.bytes.empty()) return;
+        // A probe that finds nothing keeps trying; it only speaks up when the keyboard is there but unusable.
+        if (reconnectScan_ && result.bytes.empty()) {
+            if (result.status != "No device") { status_ = result.status; message_ = result.detail; }
+            return;
+        }
         status_ = result.status;
         message_ = result.detail;
         if (!result.bytes.empty()) {
