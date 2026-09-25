@@ -882,7 +882,12 @@ void MainWindow::draw()
         const bool selected = selectedProfile_ && *selectedProfile_ == i;
         if (selected) ImGui::PushStyleColor(ImGuiCol_Button, theme::palette().selected);
         const auto label = "Profile " + std::to_string(i+1);
+        // Over Bluetooth only the profile the keyboard is on can be read.
+        const bool usbOnly = bluetooth_ && !selected;
+        ImGui::BeginDisabled(usbOnly);
         if (ImGui::Button(label.c_str(), ImVec2(96,32))) selectProfile(i);
+        ImGui::EndDisabled();
+        if (usbOnly) ImGui::SetItemTooltip("Other profiles can be read over USB");
         if (selected) ImGui::PopStyleColor();
     }
     // Re-reads the profile the keyboard is using; it replaces the editor content, so unsaved edits are confirmed first.

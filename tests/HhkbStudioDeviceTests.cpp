@@ -637,6 +637,40 @@ void supportedInterfacesAreDiscovered()
         "hidraw device path was assembled incorrectly");
 }
 
+// Answers like the keyboard over Bluetooth: the profile is one byte counted from 1 (here: Profile 1).
+class BluetoothTransport final : public Transport {
+public:
+    [[nodiscard]] bool numbersProfilesFromOne() const override { return true; }
+    [[nodiscard]] Report exchange(const Report& request) override
+    {
+        if (request[0] == 0x03) sentWrite = true;
+        Report response{};
+        response[0] = 0x02;
+        response[1] = request[1];
+        response[2] = request[2];
+        response[3] = 1;
+        return response;
+    }
+
+    bool sentWrite = false;
+};
+
+void bluetoothProfilesCountFromOne()
+{
+    BluetoothTransport transport;
+    HhkbStudioDevice device(transport);
+    require(device.activeProfile() == 0, "Bluetooth profile 1 should be read as profile 0");
+
+    bool refused = false;
+    try {
+        static_cast<void>(device.readProfile(1));
+    } catch (const hhkbs::device::DeviceError&) {
+        refused = true;
+    }
+    require(refused, "switching profiles over Bluetooth should be refused");
+    require(!transport.sentWrite, "no switch request may be sent over Bluetooth");
+}
+
 void bluetoothInterfacesAreTold()
 {
     const auto root = std::filesystem::temp_directory_path()
@@ -676,6 +710,7 @@ int main()
         informationCommandsAreDecoded();
         padNotificationsAreDecoded();
         bluetoothInterfacesAreTold();
+        bluetoothProfilesCountFromOne();
         gesturePadsAreReadAndSwitched();
         padMonitorFollowsNotifications();
         protocolPacketsAreEncodedAndDecoded();
