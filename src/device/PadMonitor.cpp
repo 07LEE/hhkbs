@@ -1,5 +1,8 @@
 #include "device/PadMonitor.h"
 
+#include "device/HidDescriptor.h"
+
+#include <array>
 #include <cerrno>
 #include <fcntl.h>
 #include <poll.h>
@@ -44,6 +47,7 @@ void PadMonitor::run(const std::filesystem::path& path)
         return;
     }
 
+    const auto reportId = readConfigurationReportId(descriptor);
     while (!stop_) {
         pollfd item{.fd = descriptor, .events = POLLIN, .revents = 0};
         const int ready = ::poll(&item, 1, 200);
@@ -51,9 +55,10 @@ void PadMonitor::run(const std::filesystem::path& path)
         if (ready <= 0) continue;
         if ((item.revents & (POLLERR | POLLHUP | POLLNVAL)) != 0) break;
 
+        std::array<std::uint8_t, Report{}.size() + 1> packet{};
+        const auto count = ::read(descriptor, packet.data(), packet.size());
         Report report{};
-        const auto count = ::read(descriptor, report.data(), report.size());
-        if (count < static_cast<ssize_t>(report.size())) continue;
+        if (count <= 0 || !extractConfigurationReport({packet.data(), static_cast<std::size_t>(count)}, reportId, report)) continue;
         if (const auto change = protocol::decodePadNotification(report)) {
             states_[change->pad] = change->on ? 1 : 0;
         }

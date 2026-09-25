@@ -46,6 +46,8 @@ add_library(hhkbs_core STATIC
     src/device/HhkbProtocol.h
     src/device/PadMonitor.cpp
     src/device/PadMonitor.h
+    src/device/HidDescriptor.cpp
+    src/device/HidDescriptor.h
     src/device/HidrawTransport.cpp
     src/device/HidrawTransport.h
     src/device/Transport.h

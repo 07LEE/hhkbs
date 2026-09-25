@@ -3,7 +3,9 @@
 #include "device/Transport.h"
 
 #include <chrono>
+#include <cstdint>
 #include <filesystem>
+#include <optional>
 
 namespace hhkbs::device {
 
@@ -32,6 +34,7 @@ private:
     [[nodiscard]] Report readResponse(const Report& request) const;
 
     int fileDescriptor_{-1};
+    std::optional<std::uint8_t> reportId_;  // set when the configuration reports carry a Report ID (Bluetooth)
     std::filesystem::path path_;
     std::chrono::milliseconds timeout_;
 };
