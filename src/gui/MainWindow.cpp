@@ -475,7 +475,6 @@ void MainWindow::perform(Action action)
         const auto entry = *pendingBackup_;
         pendingBackup_.reset();
         if (!loadBackup(entry)) message_ = dialogError_;
-        else if (pendingBackupApply_) openApply(true);
     }
     else if (action == Action::Close) close_ = true;
 }
@@ -486,7 +485,7 @@ void MainWindow::openFiles(bool save)
     path_[0] = '\0';
     std::snprintf(fileName_.data(), fileName_.size(), "%s", save ? "profile.toml" : "");
 }
-// The profiles with changes are listed and picked; from "Restore and apply" only the shown profile is, since that is
+// The profiles with changes are listed and picked; from "Restore and apply" of the defaults only the shown profile is, since that is
 // the one the restored content is for.
 void MainWindow::openApply(const bool onlyShown)
 {
@@ -511,11 +510,10 @@ void MainWindow::openBackups(bool manage)
     selectManageTab_ = manage;
     dialog_ = Dialog::Backups;
 }
-void MainWindow::requestLoadBackup(const hhkbs::keymap::BackupEntry& entry, bool thenApply)
+void MainWindow::requestLoadBackup(const hhkbs::keymap::BackupEntry& entry)
 {
     // Loading replaces the editor, so unsaved edits get the usual chance to be exported first.
     pendingBackup_ = entry;
-    pendingBackupApply_ = thenApply;
     request(Action::LoadBackup);
 }
 bool MainWindow::loadBackup(const hhkbs::keymap::BackupEntry& entry)
@@ -624,17 +622,14 @@ void MainWindow::drawBackups()
     const float footerBelow = style.ItemSpacing.y * 2 + ImGui::GetFrameHeight() + 2.f;
     const float tagRowBelow = ImGui::GetFrameHeight() + style.ItemSpacing.y;
     if (ImGui::BeginTabItem("Restore")) {
-        dialog::hint("Load a backup into the editor, or restore it to the keyboard.");
+        dialog::hint("Load a backup into the editor. It is written to the keyboard only when you apply it there.");
         drawBackupList(footerBelow);
         dialog::error(dialogError_);
         dialog::pinFooter();
         // The actions start at the left edge, Close is always at the right edge, on both tabs.
-        const int hit = dialog::footer({{"Restore and apply", true, false, chosen && !demo_},
-                                        {"Load into editor", false, false, chosen}},
-                                       {{"Close"}});
-        if (hit == 0) requestLoadBackup(backups_[*backupChoice_], true);
-        else if (hit == 1) requestLoadBackup(backups_[*backupChoice_], false);
-        else if (hit == 2) cancelDialog();
+        const int hit = dialog::footer({{"Load into editor", true, false, chosen}}, {{"Close"}});
+        if (hit == 0) requestLoadBackup(backups_[*backupChoice_]);
+        else if (hit == 1) cancelDialog();
         ImGui::EndTabItem();
     }
     // Coming back from a delete or clean-up lands on the tab the user left.

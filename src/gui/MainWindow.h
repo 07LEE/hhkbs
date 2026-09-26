@@ -87,7 +87,7 @@ private:
     void drawBackups();
     void drawBackupList(float belowList);
     void openBackupFolder();
-    void requestLoadBackup(const hhkbs::keymap::BackupEntry& entry, bool thenApply);
+    void requestLoadBackup(const hhkbs::keymap::BackupEntry& entry);
     void drawDeleteBackup();
     void saveBackupTag();
     void drawCleanBackups();
@@ -106,7 +106,6 @@ private:
     std::array<char, 256> tagInput_{};  // the tag being edited for the chosen backup
     std::optional<std::size_t> tagShownFor_;  // the backup tagInput_ was filled from
     std::optional<hhkbs::keymap::BackupEntry> pendingBackup_;
-    bool pendingBackupApply_ = false;
     bool selectManageTab_ = false;
     bool confirmDelete_ = false;  // the delete confirmation is open over the Backups window
     std::size_t backupCount_ = 0;
