@@ -19,7 +19,7 @@ public:
     void requestClose();
     [[nodiscard]] bool shouldClose() const { return close_; }
 private:
-    enum class Action { None, Read, SwitchProfile, Import, LoadBackup, Close };
+    enum class Action { None, Read, Import, LoadBackup, Close };
     enum class Dialog { None, Assign, Unsaved, Import, Export, Overwrite, Defaults, Apply, Backups, CleanBackups };
     struct ScanResult {
         std::string status;
@@ -39,13 +39,26 @@ private:
     struct ApplyResult {
         bool ok = false;
         std::string message;
-        std::vector<std::uint8_t> bytes;
-        std::uint16_t profile = 0;
+        std::vector<std::uint16_t> written;               // the profiles that were written, in order
+        std::array<std::vector<std::uint8_t>, 4> bytes;   // what each of them holds now
     };
-    struct PreviewResult {
+    struct ProfileRead {
         std::uint16_t profile = 0;
         std::vector<std::uint8_t> bytes;
         std::string error;  // empty when the profile was read
+    };
+    struct PreviewResult { std::vector<ProfileRead> profiles; };
+    // What the Apply dialog knows about one profile: the keys that differ from what the keyboard holds.
+    struct Preview {
+        bool read = false;
+        std::string error;
+        std::vector<hhkbs::keymap::KeyChange> changes;
+    };
+    // The work on a profile that is not the one shown; it comes back when that profile is chosen again.
+    struct Stash {
+        hhkbs::keymap::Keymap keymap;
+        std::vector<std::uint8_t> savedBytes;
+        std::string summary;
     };
     void beginScan(std::optional<std::uint16_t> profile = std::nullopt, bool reconnect = false);
     void selectProfile(std::uint16_t profile);
@@ -58,13 +71,19 @@ private:
     void beginPreview();
     void pollPreview();
     void drawChanges();
+    void stashShown();
+    void showStashed(std::uint16_t profile);
+    void useKeyboardAsReference();
+    [[nodiscard]] const hhkbs::keymap::Keymap* draft(std::uint16_t profile) const;
+    [[nodiscard]] std::vector<std::uint16_t> editedProfiles() const;
+    [[nodiscard]] bool anyUnsaved() const;
     [[nodiscard]] bool busy() const { return scan_.valid() || apply_.valid() || pad_.valid() || preview_.valid(); }
     void request(Action action);
     void perform(Action action);
     void openFiles(bool save);
     void openBackups(bool manage = false);
     void refreshBackupCount();
-    void openApply();
+    void openApply(bool onlyShown = false);
     void drawBackups();
     void drawBackupList(float belowList);
     void openBackupFolder();
@@ -95,16 +114,17 @@ private:
     std::future<ScanResult> scan_;
     std::future<ApplyResult> apply_;
     std::future<PadResult> pad_;
-    // What the Apply dialog compares the editor with: the target profile as the keyboard holds it right now.
+    // The Apply dialog reads the profiles that have changes, so it can list what would change on each.
     std::future<PreviewResult> preview_;
-    std::optional<std::uint16_t> previewFor_;  // the profile the fields below describe, or that failed to read
-    std::vector<hhkbs::keymap::KeyChange> previewChanges_;
-    std::string previewError_;
+    bool previewDone_ = false;
+    std::array<Preview, 4> previews_;
+    std::array<bool, 4> applyPick_{};   // the profiles the Apply will write
+    std::uint16_t applyView_ = 0;       // the profile whose changes the dialog lists
+    std::array<std::optional<Stash>, 4> stashed_;
+    // What the keyboard held for each profile when it was last read or written; empty when it has not been read.
+    std::array<std::vector<std::uint8_t>, 4> keyboardBytes_;
     // The keyboard profile shown in the editor; only set once it has been read or applied.
     std::optional<std::uint16_t> selectedProfile_;
-    std::optional<std::uint16_t> requestedProfile_;
-    // The profile the Apply dialog will overwrite; it can differ from the profile the editor content came from.
-    std::optional<std::uint16_t> applyTarget_;
     bool demo_ = false;
     std::string status_ = "No device";
     std::string summary_;
