@@ -608,9 +608,10 @@ void MainWindow::drawBackups()
         dialog::error(dialogError_);
         dialog::pinFooter();
         // The actions start at the left edge, Close is always at the right edge, on both tabs.
-        const int hit = dialog::footer({{"Load into editor", true, false, chosen}}, {{"Close"}});
+        const int hit = dialog::footer({{"Load into editor", true, false, chosen}, {"Load default keymap"}}, {{"Close"}});
         if (hit == 0) requestLoadBackup(backups_[*backupChoice_]);
-        else if (hit == 1) cancelDialog();
+        else if (hit == 1) dialog_ = Dialog::Defaults;
+        else if (hit == 2) cancelDialog();
         ImGui::EndTabItem();
     }
     // Coming back from a delete or clean-up lands on the tab the user left.
@@ -1047,19 +1048,21 @@ void MainWindow::drawDialog()
         if (hit == 0) cancelDialog();
         else if (hit == 1) { finishDialog(); beginApply(); }
     } else if (dialog_ == Dialog::Defaults) {
-        dialog::title("Restore defaults");
-        ImGui::TextWrapped("Restore the US Profile 1 defaults in the editor? "
-                           "This does not change the keyboard; it is written only when you apply it.");
-        const auto restore = [this] {
-            const Keymap defaults(KeyboardLayout::usWindowsFactoryProfile());
+        dialog::title("Load default keymap");
+        const Keymap defaults(KeyboardLayout::usWindowsFactoryProfile());
+        const auto changes = hhkbs::keymap::diffProfiles(keymap_.layers(), defaults.layers()).size();
+        ImGui::TextWrapped("Replace the keys of the profile on screen with the built-in US default keymap? "
+                           "%zu key%s change, and your edits to this profile are lost. "
+                           "The keyboard is not changed; it is written only when you apply it.", changes, changes == 1 ? "" : "s");
+        dialog::error(dialogError_);
+        const int hit = dialog::footer({{"Back"}, {"Load default keymap", true}});
+        if (hit == 0) dialog_ = Dialog::Backups;
+        else if (hit == 1) {
             for (std::size_t layer=0; layer<Keymap::layerCount; ++layer)
                 for (std::size_t slot=0; slot<Keymap::keysPerLayer; ++slot)
                     keymap_.setScanCode(layer, slot, defaults.scanCode(layer,slot));
-        };
-        dialog::error(dialogError_);
-        const int hit = dialog::footer({{"Cancel"}, {"Restore defaults", true}});
-        if (hit == 0) cancelDialog();
-        else if (hit == 1) { restore(); finishDialog(); }
+            finishDialog();
+        }
     }
     if (ImGui::IsKeyPressed(ImGuiKey_Escape)) cancelDialog();
     ImGui::EndPopup();
@@ -1233,19 +1236,19 @@ void MainWindow::draw()
     if (ImGui::Button(backupsLabel.c_str())) openBackups();
 
     const auto buttonWidth = [&](const char* label) { return ImGui::CalcTextSize(label).x + style.FramePadding.x * 2; };
-    const float rightWidth = buttonWidth("Restore defaults") + buttonWidth("Discard changes") + buttonWidth("Apply to keyboard") + 2 * style.ItemSpacing.x;
+    // Apply is the only button that changes the keyboard, so it keeps a wider gap from the editor's own Discard.
+    const float applyGap = 28.f;
+    const float rightWidth = buttonWidth("Discard changes") + applyGap + buttonWidth("Apply to keyboard");
     const float rightX = ImGui::GetWindowWidth() - style.WindowPadding.x - rightWidth;
     if (rightX >= ImGui::GetItemRectMax().x - ImGui::GetWindowPos().x + 36.f) ImGui::SameLine(rightX);
     else ImGui::SameLine();
     ImGui::BeginDisabled(!loaded_);
-    if (ImGui::Button("Restore defaults")) dialog_ = Dialog::Defaults;
-    ImGui::SameLine();
     ImGui::BeginDisabled(!keymap_.isModified());
     if (ImGui::Button("Discard changes")) keymap_.reset();
     ImGui::EndDisabled();
     ImGui::EndDisabled();
     ImGui::EndDisabled();
-    ImGui::SameLine();
+    ImGui::SameLine(0, applyGap);
     ImGui::PushStyleColor(ImGuiCol_Button, theme::palette().accent);
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, theme::palette().accentHovered);
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, theme::palette().accentActive);
