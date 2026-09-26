@@ -36,6 +36,9 @@ public:
         std::size_t keyIndex) const;
     void reset() noexcept;
 
+    // Makes `profileBytes` the content the marks and reset() compare with, without touching the keys being edited.
+    void rebase(const std::vector<std::uint8_t>& profileBytes);
+
 private:
     static void validateIndices(std::size_t layerIndex, std::size_t keyIndex);
 

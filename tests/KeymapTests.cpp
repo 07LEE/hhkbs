@@ -197,6 +197,25 @@ void malformedTomlIsRejected()
 
 }  // namespace
 
+void rebaseMovesTheReferenceNotTheKeys()
+{
+    Keymap keymap;
+    keymap.setScanCode(0, 3, 0x0004);
+
+    Keymap keyboard;
+    keyboard.setScanCode(0, 3, 0x0004);
+    keymap.rebase(keyboard.toBytes());
+    require(keymap.scanCode(0, 3) == 0x0004, "rebase must keep the edited keys");
+    require(!keymap.isModified(), "keys equal to the new reference are not modified");
+
+    keymap.setScanCode(0, 5, 0x0009);
+    require(keymap.isKeyModified(0, 5) && !keymap.isKeyModified(0, 3), "only keys off the reference are modified");
+    keymap.reset();
+    require(keymap.scanCode(0, 5) == 0 && keymap.scanCode(0, 3) == 0x0004, "reset must return to the new reference");
+
+    requireThrows<std::invalid_argument>([&] { keymap.rebase({1, 2, 3}); }, "a short profile must be rejected");
+}
+
 void diffListsOnlyTheChangedKeys()
 {
     Keymap before;
@@ -229,6 +248,7 @@ int main()
         tomlProfilesRoundTrip();
         malformedTomlIsRejected();
         diffListsOnlyTheChangedKeys();
+        rebaseMovesTheReferenceNotTheKeys();
     } catch (const std::exception& error) {
         std::cerr << "Keymap test failed: " << error.what() << '\n';
         return 1;
