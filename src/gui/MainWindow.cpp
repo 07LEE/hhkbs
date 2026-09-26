@@ -854,7 +854,9 @@ void MainWindow::drawChanges()
         return;
     }
     if (!previewError_.empty()) {
+        ImGui::PushTextWrapPos(0.f);
         ImGui::TextDisabled("Could not read the keyboard to compare: %s", previewError_.c_str());
+        ImGui::PopTextWrapPos();
         return;
     }
     if (previewChanges_.empty()) {
@@ -862,9 +864,20 @@ void MainWindow::drawChanges()
         return;
     }
     ImGui::Text("%zu key%s will change", previewChanges_.size(), previewChanges_.size() == 1 ? "" : "s");
-    const float rows = 8.f;
+    // As tall as the list needs, up to ten rows, and never past the bottom of the window: a longer list scrolls in
+    // the table. Under the table come the gap, an error line if there is one, and the footer's spacing, buttons and
+    // the window's bottom padding.
+    const float rowHeight = ImGui::GetTextLineHeight() + style.CellPadding.y * 2;
+    const float error = dialogError_.empty() ? 0.f
+        : ImGui::CalcTextSize(dialogError_.c_str(), nullptr, false, ImGui::GetContentRegionAvail().x).y + style.ItemSpacing.y;
+    const float footer = style.ItemSpacing.y * 3 + error + ImGui::GetFrameHeight() + style.WindowPadding.y + 2.f;
+    const auto* viewport = ImGui::GetMainViewport();
+    // The dialog stays centered and may be as tall as the window less a margin; the rest of that is for the table.
+    const float room = viewport->WorkSize.y - 40.f - ImGui::GetCursorPosY() - footer;
+    const float fitting = std::max(3.f, std::floor(room / rowHeight) - 1.f);  // one row is the header
+    const float rows = std::min({static_cast<float>(previewChanges_.size()), 10.f, fitting});
     if (!ImGui::BeginTable("ApplyChanges", 3, ImGuiTableFlags_ScrollY | ImGuiTableFlags_RowBg | ImGuiTableFlags_Borders,
-                           ImVec2(0, ImGui::GetTextLineHeightWithSpacing() * (rows + 1) + style.CellPadding.y * 2 * rows))) return;
+                           ImVec2(0, rowHeight * (rows + 1)))) return;
     ImGui::TableSetupColumn("Key", ImGuiTableColumnFlags_WidthStretch, 1.f);
     ImGui::TableSetupColumn("On the keyboard", ImGuiTableColumnFlags_WidthStretch, 1.f);
     ImGui::TableSetupColumn("After apply", ImGuiTableColumnFlags_WidthStretch, 1.f);
@@ -887,11 +900,13 @@ void MainWindow::drawDialog()
     if (dialog_ == Dialog::None) return;
     if (!ImGui::IsPopupOpen("HHKBS")) ImGui::OpenPopup("HHKBS");
     const auto* viewport = ImGui::GetMainViewport();
-    ImGui::SetNextWindowPos(viewport->GetCenter(), ImGuiCond_Appearing, ImVec2(.5f,.5f));
     // The Backups dialogs share one height, in lines of text so it follows the font, and never taller than the window;
     // every other dialog is as tall as its content.
     const bool fixedHeight = dialog_ == Dialog::Backups || dialog_ == Dialog::CleanBackups;
     const float backupsHeight = std::min(ImGui::GetFrameHeightWithSpacing() * 14.f, viewport->WorkSize.y - 40.f);
+    // The Apply dialog grows when the keyboard's answer brings the list of changes, so it is kept centered instead of
+    // only when it appears; otherwise it would grow down and off the window.
+    ImGui::SetNextWindowPos(viewport->GetCenter(), dialog_ == Dialog::Apply ? ImGuiCond_Always : ImGuiCond_Appearing, ImVec2(.5f,.5f));
     ImGui::SetNextWindowSize(ImVec2(620, fixedHeight ? backupsHeight : 0), ImGuiCond_Always);
     if (!ImGui::BeginPopupModal("HHKBS", nullptr, fixedHeight ? ImGuiWindowFlags_NoResize : ImGuiWindowFlags_AlwaysAutoResize)) return;
     // Every dialog draws its own title, error line and footer through dialog::.
