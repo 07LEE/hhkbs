@@ -111,6 +111,30 @@ bool MainWindow::anyUnsaved() const
     return false;
 }
 
+// The profiles with work that has not been saved, for the prompt shown when the window is closed.
+std::string MainWindow::unsavedList() const
+{
+    std::string list;
+    const auto add = [&](const std::string& name) { list += (list.empty() ? "" : ", ") + name; };
+    if (unsaved()) add(selectedProfile_ ? "Profile " + std::to_string(*selectedProfile_ + 1) + " (on screen)" : "the profile on screen");
+    for (std::uint16_t i = 0; i < 4; ++i)
+        if (stashed_[i] && stashed_[i]->keymap.toBytes() != stashed_[i]->savedBytes) add("Profile " + std::to_string(i + 1));
+    return list;
+}
+
+// Brings a profile with unsaved work onto the screen when the one shown has none, so the prompt's Save acts on it.
+void MainWindow::showFirstUnsaved()
+{
+    if (unsaved()) return;
+    for (std::uint16_t i = 0; i < 4; ++i) {
+        if (stashed_[i] && stashed_[i]->keymap.toBytes() != stashed_[i]->savedBytes) {
+            stashShown();
+            showStashed(i);
+            return;
+        }
+    }
+}
+
 // The work on the shown profile, wherever it is kept: the editor for the profile on screen, a stash for the others.
 const Keymap* MainWindow::draft(const std::uint16_t profile) const
 {
@@ -457,7 +481,11 @@ void MainWindow::selectProfile(std::uint16_t profile)
 void MainWindow::request(Action action)
 {
     // Closing loses the work on every profile; the other actions only replace the one on screen.
-    if (action == Action::Close ? anyUnsaved() : unsaved()) { pending_ = action; dialog_ = Dialog::Unsaved; }
+    if (action == Action::Close ? anyUnsaved() : unsaved()) {
+        if (action == Action::Close) showFirstUnsaved();
+        pending_ = action;
+        dialog_ = Dialog::Unsaved;
+    }
     else perform(action);
 }
 void MainWindow::perform(Action action)
@@ -471,7 +499,11 @@ void MainWindow::perform(Action action)
         pendingBackup_.reset();
         if (!loadBackup(entry)) message_ = dialogError_;
     }
-    else if (action == Action::Close) close_ = true;
+    else if (action == Action::Close) {
+        // After saving one profile, the next one with unsaved work is asked about, until none is left.
+        if (anyUnsaved()) { showFirstUnsaved(); pending_ = Action::Close; dialog_ = Dialog::Unsaved; }
+        else close_ = true;
+    }
 }
 void MainWindow::openSave()
 {
@@ -1025,14 +1057,18 @@ void MainWindow::drawDialog()
         else if (cancelled) cancelDialog();
     } else if (dialog_ == Dialog::Unsaved) {
         dialog::title("Unsaved keymap changes");
-        ImGui::TextWrapped("Save the modified profile to the backups before continuing?");
+        const bool closing = pending_ == Action::Close;
+        if (closing) ImGui::TextWrapped("Not saved: %s. Save the profile on screen to the backups before closing? "
+                                        "Closing without saving loses every one of them.", unsavedList().c_str());
+        else ImGui::TextWrapped("Save the modified profile to the backups before continuing?");
         dialog::error(dialogError_);
-        const int hit = dialog::footer({{"Cancel"}, {"Discard and continue"}, {"Save first", true}});
+        const int hit = dialog::footer({{"Cancel"}, {closing ? "Close without saving" : "Discard and continue"}, {"Save first", true}});
         if (hit == 0) cancelDialog();
         else if (hit == 1) {
             const auto action = std::exchange(pending_, Action::None);
             finishDialog();
-            perform(action);
+            if (action == Action::Close) close_ = true;
+            else perform(action);
         } else if (hit == 2) openSave();
     } else if (dialog_ == Dialog::Save) drawSave();
     else if (dialog_ == Dialog::Backups) drawBackups();

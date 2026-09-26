@@ -80,6 +80,8 @@ private:
     [[nodiscard]] const hhkbs::keymap::Keymap* draft(std::uint16_t profile) const;
     [[nodiscard]] std::vector<std::uint16_t> editedProfiles() const;
     [[nodiscard]] bool anyUnsaved() const;
+    [[nodiscard]] std::string unsavedList() const;
+    void showFirstUnsaved();
     [[nodiscard]] bool busy() const { return scan_.valid() || apply_.valid() || pad_.valid() || preview_.valid(); }
     void request(Action action);
     void perform(Action action);
