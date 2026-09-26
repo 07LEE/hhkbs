@@ -57,6 +57,8 @@ add_library(hhkbs_core STATIC
     src/keymap/Keymap.h
     src/keymap/KeyboardLayout.cpp
     src/keymap/KeyboardLayout.h
+    src/keymap/ProfileDiff.cpp
+    src/keymap/ProfileDiff.h
     src/keymap/ProfileFiles.cpp
     src/keymap/ProfileSerializer.cpp
     src/keymap/ProfileSerializer.h

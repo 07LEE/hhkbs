@@ -8,6 +8,7 @@
 #include "keymap/BackupFiles.h"
 #include "keymap/KeyboardLayout.h"
 #include "keymap/ProfileFiles.h"
+#include "keymap/ScanCodeCatalog.h"
 #include "keymap/ProfileSerializer.h"
 #include <imgui.h>
 #include <algorithm>
@@ -318,6 +319,36 @@ void MainWindow::pollApply()
     } catch (const std::exception& error) { status_ = "Apply failed"; message_ = error.what(); }
 }
 
+// Reads the profile the Apply dialog is about to overwrite, so the dialog can list what would change. Writing is
+// USB only, so there is nothing to preview over Bluetooth.
+void MainWindow::beginPreview()
+{
+    if (busy() || demo_ || bluetooth_ || !applyTarget_) return;
+    const std::uint16_t profile = *applyTarget_;
+    previewFor_.reset();
+    preview_ = std::async(std::launch::async, [profile] {
+        PreviewResult result{profile, {}, {}};
+        try {
+            auto transport = openStudio(true);
+            result.bytes = hhkbs::device::HhkbStudioDevice(*transport).readProfile(profile);
+        } catch (const std::exception& error) { result.error = error.what(); }
+        return result;
+    });
+}
+
+void MainWindow::pollPreview()
+{
+    if (!preview_.valid() || preview_.wait_for(std::chrono::seconds(0)) != std::future_status::ready) return;
+    const auto result = preview_.get();
+    previewFor_ = result.profile;
+    previewChanges_.clear();
+    previewError_ = result.error;
+    if (!result.error.empty()) return;
+    try {
+        previewChanges_ = hhkbs::keymap::diffProfiles(Keymap(result.bytes).layers(), keymap_.layers());
+    } catch (const std::exception& error) { previewError_ = error.what(); }
+}
+
 void MainWindow::requestClose()
 {
     if (busy()) { message_ = "Please wait for the keyboard operation to finish before closing."; return; }
@@ -357,6 +388,7 @@ void MainWindow::openFiles(bool save)
 void MainWindow::openApply()
 {
     applyTarget_ = selectedProfile_;
+    previewFor_.reset();
     dialogError_.clear();
     dialog_ = Dialog::Apply;
 }
@@ -812,6 +844,44 @@ void MainWindow::drawFiles()
     } catch (const std::exception& error) { importPath_.clear(); dialogError_ = error.what(); }
 }
 
+// The keys the Apply would change on the target profile: where it is, what the keyboard has now, what it gets.
+void MainWindow::drawChanges()
+{
+    if (demo_ || bluetooth_ || !applyTarget_) return;
+    const auto& style = ImGui::GetStyle();
+    if (preview_.valid() || previewFor_ != applyTarget_) {
+        ImGui::TextDisabled("Reading the keyboard's Profile %d...", *applyTarget_ + 1);
+        return;
+    }
+    if (!previewError_.empty()) {
+        ImGui::TextDisabled("Could not read the keyboard to compare: %s", previewError_.c_str());
+        return;
+    }
+    if (previewChanges_.empty()) {
+        ImGui::TextDisabled("No key differs from the keyboard's Profile %d.", *applyTarget_ + 1);
+        return;
+    }
+    ImGui::Text("%zu key%s will change", previewChanges_.size(), previewChanges_.size() == 1 ? "" : "s");
+    const float rows = 8.f;
+    if (!ImGui::BeginTable("ApplyChanges", 3, ImGuiTableFlags_ScrollY | ImGuiTableFlags_RowBg | ImGuiTableFlags_Borders,
+                           ImVec2(0, ImGui::GetTextLineHeightWithSpacing() * (rows + 1) + style.CellPadding.y * 2 * rows))) return;
+    ImGui::TableSetupColumn("Key", ImGuiTableColumnFlags_WidthStretch, 1.f);
+    ImGui::TableSetupColumn("On the keyboard", ImGuiTableColumnFlags_WidthStretch, 1.f);
+    ImGui::TableSetupColumn("After apply", ImGuiTableColumnFlags_WidthStretch, 1.f);
+    ImGui::TableSetupScrollFreeze(0, 1);
+    ImGui::TableHeadersRow();
+    for (const auto& change : previewChanges_) {
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0);
+        ImGui::Text("%s  %s", layerNames[change.layer], keyName(change.slot).c_str());
+        ImGui::TableSetColumnIndex(1);
+        ImGui::TextDisabled("%s", hhkbs::keymap::ScanCodeCatalog::labelFor(change.before).c_str());
+        ImGui::TableSetColumnIndex(2);
+        ImGui::TextUnformatted(hhkbs::keymap::ScanCodeCatalog::labelFor(change.after).c_str());
+    }
+    ImGui::EndTable();
+}
+
 void MainWindow::drawDialog()
 {
     if (dialog_ == Dialog::None) return;
@@ -867,8 +937,11 @@ void MainWindow::drawDialog()
                                "The keyboard returns to the profile it was on afterwards. "
                                "Do not unplug the keyboard while writing.", target.c_str());
         } else dialog::hint("Choose the profile to overwrite.");
+        // Choosing a profile reads it, once, so the list below matches the profile that is chosen.
+        if (applyTarget_ && !preview_.valid() && previewFor_ != applyTarget_) beginPreview();
+        drawChanges();
         dialog::error(dialogError_);
-        const int hit = dialog::footer({{"Cancel"}, {"Apply", true, false, applyTarget_.has_value()}});
+        const int hit = dialog::footer({{"Cancel"}, {"Apply", true, false, applyTarget_.has_value() && !preview_.valid()}});
         if (hit == 0) cancelDialog();
         else if (hit == 1) { finishDialog(); beginApply(); }
     } else if (dialog_ == Dialog::Defaults) {
@@ -941,6 +1014,7 @@ void MainWindow::draw()
 {
     pollScan();
     pollApply();
+    pollPreview();
     pollPadChange();
     pollConnection();
     const bool busy = this->busy();
