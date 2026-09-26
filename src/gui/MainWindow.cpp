@@ -1126,6 +1126,7 @@ void MainWindow::drawDialog()
                 for (std::size_t layer=0; layer<Keymap::layerCount; ++layer)
                     for (std::size_t slot=0; slot<Keymap::keysPerLayer; ++slot)
                         keymap_.setScanCode(layer, slot, defaults.scanCode(layer,slot));
+                savedBytes_ = keymap_.toBytes();  // the built-in keymap is not something that can be lost
             } else {
                 keymap_ = defaults;
                 loaded_ = true;
@@ -1308,7 +1309,10 @@ void MainWindow::draw()
     if (ImGui::Button("Backups")) openBackups();
     ImGui::SameLine();
     ImGui::BeginDisabled(!loaded_ || !keymap_.isModified());
-    if (ImGui::Button("Discard changes")) keymap_.reset();
+    if (ImGui::Button("Discard changes")) {
+        keymap_.reset();
+        savedBytes_ = keymap_.toBytes();  // it is the keyboard's content again, so there is nothing left to lose
+    }
     ImGui::SetItemTooltip("Put the profile on screen back to what the keyboard holds");
     ImGui::EndDisabled();
     ImGui::EndDisabled();
