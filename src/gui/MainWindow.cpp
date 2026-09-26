@@ -485,13 +485,12 @@ void MainWindow::openFiles(bool save)
     path_[0] = '\0';
     std::snprintf(fileName_.data(), fileName_.size(), "%s", save ? "profile.toml" : "");
 }
-// The profiles with changes are listed and picked; from "Restore and apply" of the defaults only the shown profile is, since that is
-// the one the restored content is for.
-void MainWindow::openApply(const bool onlyShown)
+// The profiles with changes are listed, and all of them are picked to start with.
+void MainWindow::openApply()
 {
     const auto edited = editedProfiles();
     applyPick_.fill(false);
-    for (const auto profile : edited) applyPick_[profile] = !onlyShown || selectedProfile_ == profile;
+    for (const auto profile : edited) applyPick_[profile] = true;
     applyView_ = edited.empty() ? 0 : edited.front();
     if (selectedProfile_ && std::find(edited.begin(), edited.end(), *selectedProfile_) != edited.end()) applyView_ = *selectedProfile_;
     previewDone_ = false;
@@ -1072,7 +1071,7 @@ void MainWindow::drawDialog()
     } else if (dialog_ == Dialog::Defaults) {
         dialog::title("Restore defaults");
         ImGui::TextWrapped("Restore the US Profile 1 defaults in the editor? "
-                           "Restoring alone does not change the keyboard; use \"Restore and apply\" to write them right away.");
+                           "This does not change the keyboard; it is written only when you apply it.");
         const auto restore = [this] {
             const Keymap defaults(KeyboardLayout::usWindowsFactoryProfile());
             for (std::size_t layer=0; layer<Keymap::layerCount; ++layer)
@@ -1080,10 +1079,9 @@ void MainWindow::drawDialog()
                     keymap_.setScanCode(layer, slot, defaults.scanCode(layer,slot));
         };
         dialog::error(dialogError_);
-        const int hit = dialog::footer({{"Cancel"}, {"Restore and apply", false, false, !demo_}, {"Restore defaults", true}});
+        const int hit = dialog::footer({{"Cancel"}, {"Restore defaults", true}});
         if (hit == 0) cancelDialog();
-        else if (hit == 1) { restore(); finishDialog(); openApply(true); }
-        else if (hit == 2) { restore(); finishDialog(); }
+        else if (hit == 1) { restore(); finishDialog(); }
     }
     if (ImGui::IsKeyPressed(ImGuiKey_Escape)) cancelDialog();
     ImGui::EndPopup();

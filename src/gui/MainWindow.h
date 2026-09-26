@@ -83,7 +83,7 @@ private:
     void openFiles(bool save);
     void openBackups(bool manage = false);
     void refreshBackupCount();
-    void openApply(bool onlyShown = false);
+    void openApply();
     void drawBackups();
     void drawBackupList(float belowList);
     void openBackupFolder();
