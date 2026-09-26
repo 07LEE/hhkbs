@@ -557,31 +557,21 @@ void MainWindow::drawBackupList(const float belowList)
     ImGui::BeginChild("Backups", ImVec2(0, -(belowList + errorHeight)), ImGuiChildFlags_Borders,
                       ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     if (backups_.empty()) ImGui::TextDisabled("No backups yet. One is saved before every apply.");
-    // A table: the date it was saved (dimmed), the tag (bright, blank when there is none), and on the right the
-    // profile it came from, drawn as a small pill.
-    const float pillPadding = 9.f;
-    const float pillInset = 4.f;  // keeps the pill's outline inside the cell, which clips at its edge
-    const float pillWidth = ImGui::CalcTextSize("Profile 4").x + pillPadding * 2;
-    if (!backups_.empty() && ImGui::BeginTable("BackupRows", 3, ImGuiTableFlags_ScrollY | ImGuiTableFlags_RowBg)) {
+    // A table: the date it was saved (dimmed) and the tag (bright, blank when there is none).
+    if (!backups_.empty() && ImGui::BeginTable("BackupRows", 2, ImGuiTableFlags_ScrollY | ImGuiTableFlags_RowBg)) {
         ImGui::TableSetupColumn("Saved", ImGuiTableColumnFlags_WidthFixed, ImGui::CalcTextSize("0000-00-00 00:00:00").x + 24.f);
         ImGui::TableSetupColumn("Tag", ImGuiTableColumnFlags_WidthStretch);
-        ImGui::TableSetupColumn("From", ImGuiTableColumnFlags_WidthFixed, pillWidth + 16.f);
         ImGui::TableSetupScrollFreeze(0, 1);
-        const auto rightAligned = [](float width) {
-            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.f, ImGui::GetContentRegionAvail().x - width));
-        };
-        // Each header is centered over what its column holds: the date, the whole tag column, the pill.
-        const auto header = [](const char* text, float over, float offset) {
-            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + offset + std::max(0.f, (over - ImGui::CalcTextSize(text).x) / 2));
+        // Each header is centered over what its column holds: the date and the whole tag column.
+        const auto header = [](const char* text, float over) {
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.f, (over - ImGui::CalcTextSize(text).x) / 2));
             ImGui::TextDisabled("%s", text);
         };
         ImGui::TableNextRow();
         ImGui::TableSetColumnIndex(0);
-        header("Saved", ImGui::CalcTextSize("0000-00-00 00:00:00").x, 0.f);
+        header("Saved", ImGui::CalcTextSize("0000-00-00 00:00:00").x);
         ImGui::TableSetColumnIndex(1);
-        header("Tag", ImGui::GetContentRegionAvail().x, 0.f);
-        ImGui::TableSetColumnIndex(2);
-        header("From", pillWidth, std::max(0.f, ImGui::GetContentRegionAvail().x - pillWidth - pillInset));
+        header("Tag", ImGui::GetContentRegionAvail().x);
         for (std::size_t i=0; i<backups_.size(); ++i) {
             const auto& entry = backups_[i];
             ImGui::PushID(static_cast<int>(i));
@@ -592,18 +582,6 @@ void MainWindow::drawBackupList(const float belowList)
             ImGui::PopStyleColor();
             ImGui::TableSetColumnIndex(1);
             ImGui::TextUnformatted(entry.tag.c_str());
-            ImGui::TableSetColumnIndex(2);
-            const auto profile = "Profile " + std::to_string(entry.profile + 1);
-            const ImVec2 size(pillWidth, ImGui::GetTextLineHeight() + 2.f);
-            rightAligned(size.x + pillInset);
-            const ImVec2 top = ImGui::GetCursorScreenPos(), bottom(top.x + size.x, top.y + size.y);
-            const auto& palette = theme::palette();
-            auto* draw = ImGui::GetWindowDrawList();
-            draw->AddRectFilled(top, bottom, palette.keyFill, size.y / 2);
-            draw->AddRect(top, bottom, palette.keyBorder, size.y / 2);
-            const float textWidth = ImGui::CalcTextSize(profile.c_str()).x;
-            draw->AddText(ImVec2(top.x + (size.x - textWidth) / 2, top.y + 1.f), ImGui::GetColorU32(ImGuiCol_Text), profile.c_str());
-            ImGui::Dummy(size);
             ImGui::PopID();
         }
         ImGui::EndTable();
@@ -734,7 +712,7 @@ void MainWindow::drawDeleteBackup()
     const auto entry = backups_[*backupChoice_];
     dialog::title("Delete backup");
     const std::string named = entry.tag.empty() ? "" : "\"" + entry.tag + "\" ";
-    ImGui::TextWrapped("Delete the backup %sof Profile %d saved on %s? This cannot be undone.", named.c_str(), entry.profile + 1, entry.timestamp.c_str());
+    ImGui::TextWrapped("Delete the backup %ssaved on %s? This cannot be undone.", named.c_str(), entry.timestamp.c_str());
     const int hit = dialog::footer({{"Back"}, {"Delete backup", false, true}});
     if (hit == 0) { confirmDelete_ = false; ImGui::CloseCurrentPopup(); }
     else if (hit == 1) {
