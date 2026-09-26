@@ -1109,17 +1109,32 @@ void MainWindow::drawDialog()
     } else if (dialog_ == Dialog::Defaults) {
         dialog::title("Load default keymap");
         const Keymap defaults(KeyboardLayout::usWindowsFactoryProfile());
-        const auto changes = hhkbs::keymap::diffProfiles(keymap_.layers(), defaults.layers()).size();
-        ImGui::TextWrapped("Replace the keys of the profile on screen with the built-in US default keymap? "
-                           "%zu key%s change, and your edits to this profile are lost. "
-                           "The keyboard is not changed; it is written only when you apply it.", changes, changes == 1 ? "" : "s");
+        if (loaded_) {
+            const auto changes = hhkbs::keymap::diffProfiles(keymap_.layers(), defaults.layers()).size();
+            ImGui::TextWrapped("Replace the keys of the profile on screen with the built-in US default keymap? "
+                               "%zu key%s change, and your edits to this profile are lost. "
+                               "The keyboard is not changed; it is written only when you apply it.", changes, changes == 1 ? "" : "s");
+        } else ImGui::TextWrapped("Load the built-in US default keymap into the editor? "
+                                  "The keyboard is not changed; it is written only when you apply it.");
         dialog::error(dialogError_);
         const int hit = dialog::footer({{"Back"}, {"Load default keymap", true}});
         if (hit == 0) dialog_ = Dialog::Backups;
         else if (hit == 1) {
-            for (std::size_t layer=0; layer<Keymap::layerCount; ++layer)
-                for (std::size_t slot=0; slot<Keymap::keysPerLayer; ++slot)
-                    keymap_.setScanCode(layer, slot, defaults.scanCode(layer,slot));
+            // With nothing on screen yet the defaults become the profile on screen, like a file or a backup would.
+            if (loaded_) {
+                // The keys change but what they are compared with does not, so the marks show what differs from the keyboard.
+                for (std::size_t layer=0; layer<Keymap::layerCount; ++layer)
+                    for (std::size_t slot=0; slot<Keymap::keysPerLayer; ++slot)
+                        keymap_.setScanCode(layer, slot, defaults.scanCode(layer,slot));
+            } else {
+                keymap_ = defaults;
+                loaded_ = true;
+                useKeyboardAsReference();
+                savedBytes_ = keymap_.toBytes();
+                summary_ = "Default keymap";
+                status_ = "Loaded default keymap";
+                message_.clear();
+            }
             finishDialog();
         }
     }
