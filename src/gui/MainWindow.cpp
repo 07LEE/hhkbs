@@ -829,8 +829,10 @@ void MainWindow::saveBackup()
 
 void MainWindow::drawSave()
 {
-    dialog::title("Save to backups");
-    dialog::hint("Saves the profile on screen, with your edits, as a backup you can load back from Backups.");
+    // Which profile is being saved is named, since several can be waiting when the window is being closed.
+    const std::string name = selectedProfile_ ? "Profile " + std::to_string(*selectedProfile_ + 1) : "The profile on screen";
+    dialog::title(("Save " + name + " to backups").c_str());
+    dialog::hint((name + " is saved with your edits, as a backup you can load back from Backups.").c_str());
     ImGui::AlignTextToFramePadding();
     ImGui::TextUnformatted("Tag (optional)");
     ImGui::SameLine();
@@ -1062,7 +1064,9 @@ void MainWindow::drawDialog()
                                         "Closing without saving loses every one of them.", unsavedList().c_str());
         else ImGui::TextWrapped("Save the modified profile to the backups before continuing?");
         dialog::error(dialogError_);
-        const int hit = dialog::footer({{"Cancel"}, {closing ? "Close without saving" : "Discard and continue"}, {"Save first", true}});
+        // Save first acts on the profile on screen; it says which one, since more than one can be waiting.
+        const std::string saveLabel = selectedProfile_ ? "Save Profile " + std::to_string(*selectedProfile_ + 1) : "Save first";
+        const int hit = dialog::footer({{"Cancel"}, {closing ? "Close without saving" : "Discard and continue"}, {saveLabel.c_str(), true}});
         if (hit == 0) cancelDialog();
         else if (hit == 1) {
             const auto action = std::exchange(pending_, Action::None);
