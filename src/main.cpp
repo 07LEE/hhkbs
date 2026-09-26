@@ -11,6 +11,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
+#include <filesystem>
 #include <fstream>
 #include <memory>
 #include <string_view>
@@ -95,6 +96,11 @@ int main(int argc, char* argv[])
     int result = 0;
     try {
         MainWindow app(demo);
+        glfwSetWindowUserPointer(window.get(), &app);
+        glfwSetDropCallback(window.get(), [](GLFWwindow* target, int count, const char** paths) {
+            if (auto* window = static_cast<MainWindow*>(glfwGetWindowUserPointer(target)))
+                window->dropFiles(std::vector<std::filesystem::path>(paths, paths + count));
+        });
         int frames = 0;
         bool wasFocused = true;
         const auto start = std::chrono::steady_clock::now();

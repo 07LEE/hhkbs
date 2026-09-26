@@ -17,10 +17,13 @@ public:
     explicit MainWindow(bool demoMode = false);
     void draw();
     void requestClose();
+    // Called with the files dropped on the window; the first .toml one is imported once nothing else is going on.
+    void dropFiles(const std::vector<std::filesystem::path>& paths);
     [[nodiscard]] bool shouldClose() const { return close_; }
 private:
-    enum class Action { None, Read, SwitchProfile, Import, LoadBackup, Close };
-    enum class Dialog { None, Assign, Unsaved, Import, Export, Overwrite, Defaults, Apply, Backups, CleanBackups };
+    enum class Action { None, Read, LoadFile, LoadBackup, Close };
+    enum class Dialog { None, Assign, Unsaved, Save, Defaults, Apply, Backups, CleanBackups };
+    enum class BackupTab { Import, Restore, Manage };
     struct ScanResult {
         std::string status;
         std::string detail;
@@ -39,13 +42,26 @@ private:
     struct ApplyResult {
         bool ok = false;
         std::string message;
-        std::vector<std::uint8_t> bytes;
-        std::uint16_t profile = 0;
+        std::vector<std::uint16_t> written;               // the profiles that were written, in order
+        std::array<std::vector<std::uint8_t>, 4> bytes;   // what each of them holds now
     };
-    struct PreviewResult {
+    struct ProfileRead {
         std::uint16_t profile = 0;
         std::vector<std::uint8_t> bytes;
         std::string error;  // empty when the profile was read
+    };
+    struct PreviewResult { std::vector<ProfileRead> profiles; };
+    // What the Apply dialog knows about one profile: the keys that differ from what the keyboard holds.
+    struct Preview {
+        bool read = false;
+        std::string error;
+        std::vector<hhkbs::keymap::KeyChange> changes;
+    };
+    // The work on a profile that is not the one shown; it comes back when that profile is chosen again.
+    struct Stash {
+        hhkbs::keymap::Keymap keymap;
+        std::vector<std::uint8_t> savedBytes;
+        std::string summary;
     };
     void beginScan(std::optional<std::uint16_t> profile = std::nullopt, bool reconnect = false);
     void selectProfile(std::uint16_t profile);
@@ -58,24 +74,33 @@ private:
     void beginPreview();
     void pollPreview();
     void drawChanges();
+    void stashShown();
+    void showStashed(std::uint16_t profile);
+    void useKeyboardAsReference();
+    [[nodiscard]] const hhkbs::keymap::Keymap* draft(std::uint16_t profile) const;
+    [[nodiscard]] std::vector<std::uint16_t> editedProfiles() const;
+    [[nodiscard]] bool anyUnsaved() const;
     [[nodiscard]] bool busy() const { return scan_.valid() || apply_.valid() || pad_.valid() || preview_.valid(); }
     void request(Action action);
     void perform(Action action);
-    void openFiles(bool save);
+    void requestImport(const std::filesystem::path& path);
+    [[nodiscard]] bool importFile(const std::filesystem::path& path);
+    void pollDrop();
+    void openSave();
+    void drawSave();
+    void saveBackup();
     void openBackups(bool manage = false);
-    void refreshBackupCount();
     void openApply();
     void drawBackups();
     void drawBackupList(float belowList);
     void openBackupFolder();
-    void requestLoadBackup(const hhkbs::keymap::BackupEntry& entry, bool thenApply);
+    void requestLoadBackup(const hhkbs::keymap::BackupEntry& entry);
     void drawDeleteBackup();
     void saveBackupTag();
     void drawCleanBackups();
     [[nodiscard]] bool loadBackup(const hhkbs::keymap::BackupEntry& entry);
     void drawDialog();
-    void drawFiles();
-    void saveFile(bool overwrite);
+    void drawImportTab(float belowList);
     void finishDialog();
     void cancelDialog();
     [[nodiscard]] bool unsaved() const;
@@ -87,24 +112,23 @@ private:
     std::array<char, 256> tagInput_{};  // the tag being edited for the chosen backup
     std::optional<std::size_t> tagShownFor_;  // the backup tagInput_ was filled from
     std::optional<hhkbs::keymap::BackupEntry> pendingBackup_;
-    bool pendingBackupApply_ = false;
-    bool selectManageTab_ = false;
+    std::optional<BackupTab> selectTab_;  // the Backups tab to come up on
     bool confirmDelete_ = false;  // the delete confirmation is open over the Backups window
-    std::size_t backupCount_ = 0;
     int keepBackups_ = 5;
     std::future<ScanResult> scan_;
     std::future<ApplyResult> apply_;
     std::future<PadResult> pad_;
-    // What the Apply dialog compares the editor with: the target profile as the keyboard holds it right now.
+    // The Apply dialog reads the profiles that have changes, so it can list what would change on each.
     std::future<PreviewResult> preview_;
-    std::optional<std::uint16_t> previewFor_;  // the profile the fields below describe, or that failed to read
-    std::vector<hhkbs::keymap::KeyChange> previewChanges_;
-    std::string previewError_;
+    bool previewDone_ = false;
+    std::array<Preview, 4> previews_;
+    std::array<bool, 4> applyPick_{};   // the profiles the Apply will write
+    std::uint16_t applyView_ = 0;       // the profile whose changes the dialog lists
+    std::array<std::optional<Stash>, 4> stashed_;
+    // What the keyboard held for each profile when it was last read or written; empty when it has not been read.
+    std::array<std::vector<std::uint8_t>, 4> keyboardBytes_;
     // The keyboard profile shown in the editor; only set once it has been read or applied.
     std::optional<std::uint16_t> selectedProfile_;
-    std::optional<std::uint16_t> requestedProfile_;
-    // The profile the Apply dialog will overwrite; it can differ from the profile the editor content came from.
-    std::optional<std::uint16_t> applyTarget_;
     bool demo_ = false;
     std::string status_ = "No device";
     std::string summary_;
@@ -125,10 +149,12 @@ private:
     Dialog dialog_ = Dialog::None;
     Action pending_ = Action::None;
     KeyAssignmentDialog assignment_;
-    std::array<char, 4096> path_{};      // the file an Import will read or an Export will write
+    std::array<char, 4096> path_{};      // the file an Import will read
     std::array<char, 4096> dirInput_{};  // the editable folder bar; follows directory_ until edited
-    std::array<char, 256> fileName_{};   // Export's file name inside directory_
+    std::array<char, 256> saveTag_{};    // the tag typed in the Save dialog
     std::filesystem::path shownDir_;
+    std::filesystem::path pendingFile_;  // the file to import once unsaved edits have been dealt with
+    std::filesystem::path droppedFile_;  // dropped on the window, taken up at the start of the next frame
     std::filesystem::path importPath_;  // set by a double-click to import without pressing the button
     std::filesystem::path directory_;
 };

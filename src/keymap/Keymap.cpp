@@ -84,6 +84,12 @@ void Keymap::reset() noexcept
     layers_ = originalLayers_;
 }
 
+void Keymap::rebase(const std::vector<std::uint8_t>& profileBytes)
+{
+    Keymap other(profileBytes);
+    originalLayers_ = other.layers_;
+}
+
 void Keymap::validateIndices(
     const std::size_t layerIndex,
     const std::size_t keyIndex)
