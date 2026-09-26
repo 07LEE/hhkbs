@@ -99,12 +99,6 @@ MainWindow::MainWindow(bool demoMode)
         status_ = "Demo profile";
         summary_ = "Offline US profile / Changes are kept in memory";
     } else beginScan();
-    refreshBackupCount();
-}
-
-void MainWindow::refreshBackupCount()
-{
-    backupCount_ = hhkbs::keymap::listBackups(hhkbs::keymap::backupDirectory()).size();
 }
 
 bool MainWindow::unsaved() const { return loaded_ && keymap_.toBytes() != savedBytes_; }
@@ -397,7 +391,6 @@ void MainWindow::pollApply()
                 stashed_[profile]->savedBytes = stashed_[profile]->keymap.toBytes();
             }
         }
-        if (!result.written.empty()) refreshBackupCount();
         status_ = result.ok ? "Applied" : "Apply failed";
     } catch (const std::exception& error) { status_ = "Apply failed"; message_ = error.what(); }
 }
@@ -470,7 +463,9 @@ void MainWindow::request(Action action)
 void MainWindow::perform(Action action)
 {
     if (action == Action::Read) beginScan();
-    else if (action == Action::Import) openImport();
+    else if (action == Action::LoadFile) {
+        if (!importFile(std::exchange(pendingFile_, {}))) message_ = dialogError_;
+    }
     else if (action == Action::LoadBackup && pendingBackup_) {
         const auto entry = *pendingBackup_;
         pendingBackup_.reset();
@@ -478,17 +473,48 @@ void MainWindow::perform(Action action)
     }
     else if (action == Action::Close) close_ = true;
 }
-void MainWindow::openImport()
-{
-    dialog_ = Dialog::Import;
-    dialogError_.clear();
-    path_[0] = '\0';
-}
 void MainWindow::openSave()
 {
     dialog_ = Dialog::Save;
     dialogError_.clear();
     saveTag_[0] = '\0';
+}
+// A file goes into the editor like a backup does: unsaved edits get their chance to be saved first.
+void MainWindow::requestImport(const std::filesystem::path& path)
+{
+    pendingFile_ = path;
+    request(Action::LoadFile);
+}
+bool MainWindow::importFile(const std::filesystem::path& path)
+{
+    try {
+        auto profile = hhkbs::keymap::readProfile(path);
+        keymap_ = std::move(profile);
+        useKeyboardAsReference();
+        savedBytes_ = keymap_.toBytes();
+        loaded_ = true;
+        summary_ = "Imported " + path.filename().string();
+        status_ = "Imported profile";
+        message_.clear();
+        directory_ = path.parent_path();
+        finishDialog();
+        return true;
+    } catch (const std::exception& error) { dialogError_ = error.what(); }
+    return false;
+}
+void MainWindow::dropFiles(const std::vector<std::filesystem::path>& paths)
+{
+    for (const auto& path : paths) {
+        if (path.extension() == ".toml") { droppedFile_ = path; return; }
+    }
+    message_ = "Only .toml profiles can be dropped here.";
+}
+void MainWindow::pollDrop()
+{
+    if (droppedFile_.empty()) return;
+    // A dialog or a running keyboard operation has the window's attention; the file is set aside, not imported.
+    if (dialog_ != Dialog::None || busy()) { droppedFile_.clear(); return; }
+    requestImport(std::exchange(droppedFile_, {}));
 }
 // The profiles with changes are listed, and all of them are picked to start with.
 void MainWindow::openApply()
@@ -509,9 +535,8 @@ void MainWindow::openBackups(bool manage)
     backupChoice_.reset();
     tagShownFor_.reset();
     confirmDelete_ = false;
-    backupCount_ = backups_.size();
     dialogError_.clear();
-    selectManageTab_ = manage;
+    selectTab_ = manage ? BackupTab::Manage : BackupTab::Restore;
     dialog_ = Dialog::Backups;
 }
 void MainWindow::requestLoadBackup(const hhkbs::keymap::BackupEntry& entry)
@@ -602,22 +627,27 @@ void MainWindow::drawBackups()
     const auto& style = ImGui::GetStyle();
     const float footerBelow = style.ItemSpacing.y * 2 + ImGui::GetFrameHeight() + 2.f;
     const float tagRowBelow = ImGui::GetFrameHeight() + style.ItemSpacing.y;
-    if (ImGui::BeginTabItem("Restore")) {
+    // The tab to come up on is asked for once: when the window opens, and when coming back from a delete or clean-up.
+    const auto wanted = std::exchange(selectTab_, std::nullopt);
+    const auto flagsFor = [&](BackupTab tab) { return wanted == tab ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None; };
+    if (ImGui::BeginTabItem("Import", nullptr, flagsFor(BackupTab::Import))) {
+        dialog::hint("Load a .toml profile from a file into the editor. You can also drop one on the window.");
+        drawImportTab(footerBelow);
+        ImGui::EndTabItem();
+    }
+    if (ImGui::BeginTabItem("Restore", nullptr, flagsFor(BackupTab::Restore))) {
         dialog::hint("Load a backup into the editor. It is written to the keyboard only when you apply it there.");
         drawBackupList(footerBelow);
         dialog::error(dialogError_);
         dialog::pinFooter();
-        // The actions start at the left edge, Close is always at the right edge, on both tabs.
+        // The actions start at the left edge, Close is always at the right edge, on every tab.
         const int hit = dialog::footer({{"Load into editor", true, false, chosen}, {"Load default keymap"}}, {{"Close"}});
         if (hit == 0) requestLoadBackup(backups_[*backupChoice_]);
         else if (hit == 1) dialog_ = Dialog::Defaults;
         else if (hit == 2) cancelDialog();
         ImGui::EndTabItem();
     }
-    // Coming back from a delete or clean-up lands on the tab the user left.
-    const auto flags = selectManageTab_ ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None;
-    selectManageTab_ = false;
-    if (ImGui::BeginTabItem("Manage", nullptr, flags)) {
+    if (ImGui::BeginTabItem("Manage", nullptr, flagsFor(BackupTab::Manage))) {
         dialog::hint("Tag or delete backups. HHKBS never deletes them on its own.");
         drawBackupList(footerBelow + tagRowBelow);
         // The tag box follows the chosen backup and starts from its current tag; saving it blank removes the tag.
@@ -693,7 +723,7 @@ void MainWindow::drawCleanBackups()
     dialog::error(dialogError_);
     dialog::pinFooter();
     const int hit = dialog::footer({{"Back"}, {"Delete backups", false, true, !surplus.empty()}});
-    if (hit == 0) { dialog_ = Dialog::Backups; selectManageTab_ = true; }
+    if (hit == 0) { dialog_ = Dialog::Backups; selectTab_ = BackupTab::Manage; }
     else if (hit == 1) {
         std::size_t deleted = 0;
         std::string firstError;
@@ -759,7 +789,6 @@ void MainWindow::saveBackup()
                     if (entry.path == path) hhkbs::keymap::setBackupTag(directory, entry, saveTag_.data());
             } catch (const std::exception& error) { message_ += ". The tag was not set: " + std::string(error.what()); }
         }
-        refreshBackupCount();
         const auto action = std::exchange(pending_, Action::None);
         finishDialog();
         perform(action);
@@ -811,10 +840,8 @@ void drawFolderIcon(ImDrawList* draw, ImVec2 topLeft, float height)
 }
 }
 
-void MainWindow::drawFiles()
+void MainWindow::drawImportTab(const float belowList)
 {
-    dialog::title("Import TOML profile");
-
     // Path bar: up button plus an editable folder; typing a .toml file path selects that file.
     if (shownDir_ != directory_) {
         std::snprintf(dirInput_.data(), dirInput_.size(), "%s", directory_.c_str());
@@ -864,8 +891,12 @@ void MainWindow::drawFiles()
     });
 
     const std::filesystem::path chosen(path_.data());
+    // The list fills the tab down to what sits under it, an error line included, like the list of backups does.
+    const auto& style = ImGui::GetStyle();
+    const float errorHeight = dialogError_.empty() ? 0.f
+        : ImGui::CalcTextSize(dialogError_.c_str(), nullptr, false, ImGui::GetContentRegionAvail().x).y + style.ItemSpacing.y;
     ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(8, 4));
-    ImGui::BeginChild("Files", ImVec2(0, 250), ImGuiChildFlags_Borders);
+    ImGui::BeginChild("Files", ImVec2(0, -(belowList + errorHeight)), ImGuiChildFlags_Borders);
     if (ImGui::BeginTable("files", 3, ImGuiTableFlags_ScrollY | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingFixedFit)) {
         ImGui::TableSetupScrollFreeze(0, 1);
         ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch);
@@ -910,25 +941,14 @@ void MainWindow::drawFiles()
     ImGui::PopStyleVar();
 
     dialog::error(dialogError_);
+    dialog::pinFooter();
     const bool ready = path_[0] != '\0' || !importPath_.empty();
-    const int hit = dialog::footer({{"Cancel"}, {"Import", true, false, ready}});
-    if (hit == 0) { cancelDialog(); return; }
-    const bool pressed = hit == 1;
-    if (!pressed && importPath_.empty()) return;
-    try {
-        const auto target = importPath_.empty() ? std::filesystem::path(path_.data()) : importPath_;
-        importPath_.clear();
-        auto profile = hhkbs::keymap::readProfile(target);
-        keymap_ = std::move(profile);
-        useKeyboardAsReference();
-        savedBytes_ = keymap_.toBytes();
-        loaded_ = true;
-        summary_ = "Imported " + target.filename().string();
-        status_ = "Imported profile";
-        message_.clear();
-        directory_ = target.parent_path();
-        finishDialog();
-    } catch (const std::exception& error) { importPath_.clear(); dialogError_ = error.what(); }
+    const int hit = dialog::footer({{"Import file", true, false, ready}}, {{"Close"}});
+    if (hit == 1) { cancelDialog(); return; }
+    if (hit != 0 && importPath_.empty()) return;
+    const auto target = importPath_.empty() ? std::filesystem::path(path_.data()) : importPath_;
+    importPath_.clear();
+    requestImport(target);
 }
 
 // The keys the Apply would change on the listed profile: where it is, what the keyboard has now, what it gets.
@@ -1014,8 +1034,7 @@ void MainWindow::drawDialog()
             finishDialog();
             perform(action);
         } else if (hit == 2) openSave();
-    } else if (dialog_ == Dialog::Import) drawFiles();
-    else if (dialog_ == Dialog::Save) drawSave();
+    } else if (dialog_ == Dialog::Save) drawSave();
     else if (dialog_ == Dialog::Backups) drawBackups();
     else if (dialog_ == Dialog::CleanBackups) drawCleanBackups();
     else if (dialog_ == Dialog::Apply) {
@@ -1116,6 +1135,7 @@ void drawThemeIcon(ImDrawList* draw, ImVec2 min, ImVec2 max, theme::Mode mode)
 
 void MainWindow::draw()
 {
+    pollDrop();
     pollScan();
     pollApply();
     pollPreview();
@@ -1220,35 +1240,28 @@ void MainWindow::draw()
         }
     } else {
         ImGui::BeginChild("No profile", ImVec2(0,boardHeight), ImGuiChildFlags_Borders);
-        ImGui::TextWrapped("%s", busy ? "Looking for an HHKB Studio..." : "Connect a keyboard or import a profile to begin.");
+        ImGui::TextWrapped("%s", busy ? "Looking for an HHKB Studio..." : "Connect a keyboard, or drop a .toml profile on the window, to begin.");
         if (!message_.empty()) ImGui::TextWrapped("%s", message_.c_str());
         ImGui::EndChild();
     }
-    // Left: moving data in and out. Right: the editor and the one action that writes to the keyboard.
-    if (ImGui::Button("Import")) request(Action::Import);
-    ImGui::SameLine();
+    // Left: what is done with the profile on screen. Right, alone: the one action that writes to the keyboard.
     ImGui::BeginDisabled(!loaded_);
     if (ImGui::Button("Save")) openSave();
     ImGui::SetItemTooltip("Save the profile on screen, with your edits, to the backups");
     ImGui::EndDisabled();
     ImGui::SameLine();
-    const auto backupsLabel = "Backups (" + std::to_string(backupCount_) + ")";
-    if (ImGui::Button(backupsLabel.c_str())) openBackups();
+    if (ImGui::Button("Backups")) openBackups();
+    ImGui::SameLine();
+    ImGui::BeginDisabled(!loaded_ || !keymap_.isModified());
+    if (ImGui::Button("Discard changes")) keymap_.reset();
+    ImGui::SetItemTooltip("Put the profile on screen back to what the keyboard holds");
+    ImGui::EndDisabled();
+    ImGui::EndDisabled();
 
     const auto buttonWidth = [&](const char* label) { return ImGui::CalcTextSize(label).x + style.FramePadding.x * 2; };
-    // Apply is the only button that changes the keyboard, so it keeps a wider gap from the editor's own Discard.
-    const float applyGap = 28.f;
-    const float rightWidth = buttonWidth("Discard changes") + applyGap + buttonWidth("Apply to keyboard");
-    const float rightX = ImGui::GetWindowWidth() - style.WindowPadding.x - rightWidth;
+    const float rightX = ImGui::GetWindowWidth() - style.WindowPadding.x - buttonWidth("Apply to keyboard");
     if (rightX >= ImGui::GetItemRectMax().x - ImGui::GetWindowPos().x + 36.f) ImGui::SameLine(rightX);
     else ImGui::SameLine();
-    ImGui::BeginDisabled(!loaded_);
-    ImGui::BeginDisabled(!keymap_.isModified());
-    if (ImGui::Button("Discard changes")) keymap_.reset();
-    ImGui::EndDisabled();
-    ImGui::EndDisabled();
-    ImGui::EndDisabled();
-    ImGui::SameLine(0, applyGap);
     ImGui::PushStyleColor(ImGuiCol_Button, theme::palette().accent);
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, theme::palette().accentHovered);
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, theme::palette().accentActive);

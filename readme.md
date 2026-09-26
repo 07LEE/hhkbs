@@ -25,7 +25,7 @@ sudo udevadm trigger
 
 1. Connect the HHKB Studio over USB and open HHKBS. Over Bluetooth it can read the profile and switch the gesture pads; applying needs USB.
 2. Choose a profile (1 to 4) and a layer, select a key, and assign a function. Each profile keeps its own edits.
-3. Choose Apply to keyboard and pick the profiles to write. Save keeps the profile as a backup.
+3. Choose Apply to keyboard and pick the profiles to write. Save keeps the profile as a backup; Backups loads one back, and a dropped .toml file loads too.
 
 Apply saves what the keyboard held to `~/.local/state/hhkbs/backups/` before writing. Do not unplug the keyboard while it is being written.
 

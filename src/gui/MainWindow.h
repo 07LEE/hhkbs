@@ -17,10 +17,13 @@ public:
     explicit MainWindow(bool demoMode = false);
     void draw();
     void requestClose();
+    // Called with the files dropped on the window; the first .toml one is imported once nothing else is going on.
+    void dropFiles(const std::vector<std::filesystem::path>& paths);
     [[nodiscard]] bool shouldClose() const { return close_; }
 private:
-    enum class Action { None, Read, Import, LoadBackup, Close };
-    enum class Dialog { None, Assign, Unsaved, Import, Save, Defaults, Apply, Backups, CleanBackups };
+    enum class Action { None, Read, LoadFile, LoadBackup, Close };
+    enum class Dialog { None, Assign, Unsaved, Save, Defaults, Apply, Backups, CleanBackups };
+    enum class BackupTab { Import, Restore, Manage };
     struct ScanResult {
         std::string status;
         std::string detail;
@@ -80,12 +83,13 @@ private:
     [[nodiscard]] bool busy() const { return scan_.valid() || apply_.valid() || pad_.valid() || preview_.valid(); }
     void request(Action action);
     void perform(Action action);
-    void openImport();
+    void requestImport(const std::filesystem::path& path);
+    [[nodiscard]] bool importFile(const std::filesystem::path& path);
+    void pollDrop();
     void openSave();
     void drawSave();
     void saveBackup();
     void openBackups(bool manage = false);
-    void refreshBackupCount();
     void openApply();
     void drawBackups();
     void drawBackupList(float belowList);
@@ -96,7 +100,7 @@ private:
     void drawCleanBackups();
     [[nodiscard]] bool loadBackup(const hhkbs::keymap::BackupEntry& entry);
     void drawDialog();
-    void drawFiles();
+    void drawImportTab(float belowList);
     void finishDialog();
     void cancelDialog();
     [[nodiscard]] bool unsaved() const;
@@ -108,9 +112,8 @@ private:
     std::array<char, 256> tagInput_{};  // the tag being edited for the chosen backup
     std::optional<std::size_t> tagShownFor_;  // the backup tagInput_ was filled from
     std::optional<hhkbs::keymap::BackupEntry> pendingBackup_;
-    bool selectManageTab_ = false;
+    std::optional<BackupTab> selectTab_;  // the Backups tab to come up on
     bool confirmDelete_ = false;  // the delete confirmation is open over the Backups window
-    std::size_t backupCount_ = 0;
     int keepBackups_ = 5;
     std::future<ScanResult> scan_;
     std::future<ApplyResult> apply_;
@@ -150,6 +153,8 @@ private:
     std::array<char, 4096> dirInput_{};  // the editable folder bar; follows directory_ until edited
     std::array<char, 256> saveTag_{};    // the tag typed in the Save dialog
     std::filesystem::path shownDir_;
+    std::filesystem::path pendingFile_;  // the file to import once unsaved edits have been dealt with
+    std::filesystem::path droppedFile_;  // dropped on the window, taken up at the start of the next frame
     std::filesystem::path importPath_;  // set by a double-click to import without pressing the button
     std::filesystem::path directory_;
 };
