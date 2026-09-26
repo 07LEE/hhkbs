@@ -84,14 +84,13 @@ std::vector<BackupEntry> listBackups(const std::filesystem::path& directory)
     return entries;
 }
 
-std::vector<BackupEntry> backupsBeyondNewest(const std::vector<BackupEntry>& newestFirst,
-                                             const std::size_t keepPerProfile)
+std::vector<BackupEntry> backupsBeyondNewest(const std::vector<BackupEntry>& newestFirst, const std::size_t keep)
 {
-    std::map<std::uint16_t, std::size_t> seen;
+    std::size_t seen = 0;
     std::vector<BackupEntry> surplus;
     for (const auto& entry : newestFirst) {
         if (!entry.tag.empty()) continue;
-        if (seen[entry.profile]++ >= keepPerProfile) surplus.push_back(entry);
+        if (seen++ >= keep) surplus.push_back(entry);
     }
     return surplus;
 }

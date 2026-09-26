@@ -523,8 +523,7 @@ bool MainWindow::loadBackup(const hhkbs::keymap::BackupEntry& entry)
         useKeyboardAsReference();
         savedBytes_ = keymap_.toBytes();
         loaded_ = true;
-        summary_ = std::string("Backup ") + (entry.tag.empty() ? "" : "\"" + entry.tag + "\" ") + "of Profile " +
-                   std::to_string(entry.profile + 1) + " from " + entry.timestamp;
+        summary_ = std::string("Backup ") + (entry.tag.empty() ? "" : "\"" + entry.tag + "\" ") + "from " + entry.timestamp;
         status_ = "Loaded backup";
         message_.clear();
         finishDialog();
@@ -566,7 +565,7 @@ void MainWindow::drawBackupList(const float belowList)
     if (!backups_.empty() && ImGui::BeginTable("BackupRows", 3, ImGuiTableFlags_ScrollY | ImGuiTableFlags_RowBg)) {
         ImGui::TableSetupColumn("Saved", ImGuiTableColumnFlags_WidthFixed, ImGui::CalcTextSize("0000-00-00 00:00:00").x + 24.f);
         ImGui::TableSetupColumn("Tag", ImGuiTableColumnFlags_WidthStretch);
-        ImGui::TableSetupColumn("Profile", ImGuiTableColumnFlags_WidthFixed, pillWidth + 16.f);
+        ImGui::TableSetupColumn("From", ImGuiTableColumnFlags_WidthFixed, pillWidth + 16.f);
         ImGui::TableSetupScrollFreeze(0, 1);
         const auto rightAligned = [](float width) {
             ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::max(0.f, ImGui::GetContentRegionAvail().x - width));
@@ -582,7 +581,7 @@ void MainWindow::drawBackupList(const float belowList)
         ImGui::TableSetColumnIndex(1);
         header("Tag", ImGui::GetContentRegionAvail().x, 0.f);
         ImGui::TableSetColumnIndex(2);
-        header("Profile", pillWidth, std::max(0.f, ImGui::GetContentRegionAvail().x - pillWidth - pillInset));
+        header("From", pillWidth, std::max(0.f, ImGui::GetContentRegionAvail().x - pillWidth - pillInset));
         for (std::size_t i=0; i<backups_.size(); ++i) {
             const auto& entry = backups_[i];
             ImGui::PushID(static_cast<int>(i));
@@ -695,7 +694,7 @@ void MainWindow::saveBackupTag()
 void MainWindow::drawCleanBackups()
 {
     dialog::title("Clean up backups");
-    dialog::hint("Keep the newest backups of each profile and delete the rest. Tagged ones are kept.");
+    dialog::hint("Keep the newest backups and delete the rest. Tagged ones are kept.");
     ImGui::AlignTextToFramePadding();
     ImGui::TextUnformatted("Keep the newest");
     ImGui::SameLine();
@@ -704,7 +703,7 @@ void MainWindow::drawCleanBackups()
     keepBackups_ = std::clamp(keepBackups_, 1, 999);
     ImGui::SameLine();
     ImGui::AlignTextToFramePadding();
-    ImGui::TextUnformatted("backups of each profile");
+    ImGui::TextUnformatted("backups");
     const auto surplus = hhkbs::keymap::backupsBeyondNewest(backups_, static_cast<std::size_t>(keepBackups_));
     ImGui::TextWrapped("%zu of %zu backups will be deleted.", surplus.size(), backups_.size());
     dialog::error(dialogError_);
