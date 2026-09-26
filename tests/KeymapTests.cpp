@@ -1,5 +1,6 @@
 #include "keymap/KeyboardLayout.h"
 #include "keymap/Keymap.h"
+#include "keymap/ProfileDiff.h"
 #include "keymap/ProfileSerializer.h"
 #include "keymap/ScanCodeCatalog.h"
 
@@ -196,6 +197,25 @@ void malformedTomlIsRejected()
 
 }  // namespace
 
+void diffListsOnlyTheChangedKeys()
+{
+    Keymap before;
+    Keymap after;
+    require(hhkbs::keymap::diffProfiles(before.layers(), after.layers()).empty(),
+            "identical profiles must have no changes");
+
+    after.setScanCode(2, 7, 0x0004);
+    after.setScanCode(0, 9, 0x0005);
+    before.setScanCode(0, 9, 0x0001);
+
+    const auto changes = hhkbs::keymap::diffProfiles(before.layers(), after.layers());
+    require(changes.size() == 2, "expected exactly the two edited keys");
+    require(changes[0].layer == 0 && changes[0].slot == 9, "changes must come in layer then slot order");
+    require(changes[0].before == 0x0001 && changes[0].after == 0x0005, "a change must carry both values");
+    require(changes[1].layer == 2 && changes[1].slot == 7 && changes[1].before == 0 && changes[1].after == 0x0004,
+            "a change on a later layer was reported incorrectly");
+}
+
 int main()
 {
     try {
@@ -208,6 +228,7 @@ int main()
         factoryProfileContainsAllDefaultLayers();
         tomlProfilesRoundTrip();
         malformedTomlIsRejected();
+        diffListsOnlyTheChangedKeys();
     } catch (const std::exception& error) {
         std::cerr << "Keymap test failed: " << error.what() << '\n';
         return 1;

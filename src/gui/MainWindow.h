@@ -3,6 +3,7 @@
 #include "gui/KeyAssignmentDialog.h"
 #include "keymap/BackupFiles.h"
 #include "keymap/Keymap.h"
+#include "keymap/ProfileDiff.h"
 #include <array>
 #include <chrono>
 #include <filesystem>
@@ -41,6 +42,11 @@ private:
         std::vector<std::uint8_t> bytes;
         std::uint16_t profile = 0;
     };
+    struct PreviewResult {
+        std::uint16_t profile = 0;
+        std::vector<std::uint8_t> bytes;
+        std::string error;  // empty when the profile was read
+    };
     void beginScan(std::optional<std::uint16_t> profile = std::nullopt, bool reconnect = false);
     void selectProfile(std::uint16_t profile);
     void pollScan();
@@ -49,7 +55,10 @@ private:
     void pollConnection();
     void beginApply();
     void pollApply();
-    [[nodiscard]] bool busy() const { return scan_.valid() || apply_.valid() || pad_.valid(); }
+    void beginPreview();
+    void pollPreview();
+    void drawChanges();
+    [[nodiscard]] bool busy() const { return scan_.valid() || apply_.valid() || pad_.valid() || preview_.valid(); }
     void request(Action action);
     void perform(Action action);
     void openFiles(bool save);
@@ -86,6 +95,11 @@ private:
     std::future<ScanResult> scan_;
     std::future<ApplyResult> apply_;
     std::future<PadResult> pad_;
+    // What the Apply dialog compares the editor with: the target profile as the keyboard holds it right now.
+    std::future<PreviewResult> preview_;
+    std::optional<std::uint16_t> previewFor_;  // the profile the fields below describe, or that failed to read
+    std::vector<hhkbs::keymap::KeyChange> previewChanges_;
+    std::string previewError_;
     // The keyboard profile shown in the editor; only set once it has been read or applied.
     std::optional<std::uint16_t> selectedProfile_;
     std::optional<std::uint16_t> requestedProfile_;
