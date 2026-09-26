@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.25)
 
 project(
     HHKBS
-    VERSION 0.2.0
+    VERSION 0.3.0
     DESCRIPTION "Unofficial HHKB Studio keymap editor for Linux"
     LANGUAGES CXX
 )
