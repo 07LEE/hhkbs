@@ -23,14 +23,11 @@ sudo udevadm trigger
 
 ## Usage
 
-1. Connect the HHKB Studio over USB and open HHKBS. Over Bluetooth HHKBS can read the profile and switch the gesture pads; applying a profile and switching to another profile need a USB connection.
-2. Choose a profile (1 to 4) and a layer (Base, Fn1, Fn2, or Fn3). Each profile keeps its own edits while you switch between them; a dot on a profile button marks one that differs from the keyboard.
-3. Select a key, mouse button, or gesture-pad direction and assign a function.
-4. Choose Apply to keyboard and pick which of the edited profiles to write, or Export to save the profile as TOML.
+1. Connect the HHKB Studio over USB and open HHKBS. Over Bluetooth it can read the profile and switch the gesture pads; applying needs USB.
+2. Choose a profile (1 to 4) and a layer, select a key, and assign a function. Each profile keeps its own edits.
+3. Choose Apply to keyboard and pick the profiles to write. Save keeps the profile as a backup.
 
-Each gesture pad has an On/Off button beside it. HHKBS reads the state from the keyboard and switches it right away. The state belongs to the keyboard as a whole, not to a profile, so it is not saved with a profile or by Apply. The button also follows the pad when it is switched on the keyboard with a Pad On, Off or Toggle key.
-
-Apply lists the keys that would change on each profile, and saves what the keyboard holds for each profile it writes to `~/.local/state/hhkbs/backups/` before writing. Backups lists them so one can be restored. A backup can be given a short tag, and Clean up never deletes a tagged one. Do not unplug the keyboard while it is being written.
+Apply saves what the keyboard held to `~/.local/state/hhkbs/backups/` before writing. Do not unplug the keyboard while it is being written.
 
 ## Disclaimer
 

@@ -20,7 +20,7 @@ public:
     [[nodiscard]] bool shouldClose() const { return close_; }
 private:
     enum class Action { None, Read, Import, LoadBackup, Close };
-    enum class Dialog { None, Assign, Unsaved, Import, Export, Overwrite, Defaults, Apply, Backups, CleanBackups };
+    enum class Dialog { None, Assign, Unsaved, Import, Save, Defaults, Apply, Backups, CleanBackups };
     struct ScanResult {
         std::string status;
         std::string detail;
@@ -80,7 +80,10 @@ private:
     [[nodiscard]] bool busy() const { return scan_.valid() || apply_.valid() || pad_.valid() || preview_.valid(); }
     void request(Action action);
     void perform(Action action);
-    void openFiles(bool save);
+    void openImport();
+    void openSave();
+    void drawSave();
+    void saveBackup();
     void openBackups(bool manage = false);
     void refreshBackupCount();
     void openApply();
@@ -94,7 +97,6 @@ private:
     [[nodiscard]] bool loadBackup(const hhkbs::keymap::BackupEntry& entry);
     void drawDialog();
     void drawFiles();
-    void saveFile(bool overwrite);
     void finishDialog();
     void cancelDialog();
     [[nodiscard]] bool unsaved() const;
@@ -144,9 +146,9 @@ private:
     Dialog dialog_ = Dialog::None;
     Action pending_ = Action::None;
     KeyAssignmentDialog assignment_;
-    std::array<char, 4096> path_{};      // the file an Import will read or an Export will write
+    std::array<char, 4096> path_{};      // the file an Import will read
     std::array<char, 4096> dirInput_{};  // the editable folder bar; follows directory_ until edited
-    std::array<char, 256> fileName_{};   // Export's file name inside directory_
+    std::array<char, 256> saveTag_{};    // the tag typed in the Save dialog
     std::filesystem::path shownDir_;
     std::filesystem::path importPath_;  // set by a double-click to import without pressing the button
     std::filesystem::path directory_;

@@ -470,7 +470,7 @@ void MainWindow::request(Action action)
 void MainWindow::perform(Action action)
 {
     if (action == Action::Read) beginScan();
-    else if (action == Action::Import) openFiles(false);
+    else if (action == Action::Import) openImport();
     else if (action == Action::LoadBackup && pendingBackup_) {
         const auto entry = *pendingBackup_;
         pendingBackup_.reset();
@@ -478,12 +478,17 @@ void MainWindow::perform(Action action)
     }
     else if (action == Action::Close) close_ = true;
 }
-void MainWindow::openFiles(bool save)
+void MainWindow::openImport()
 {
-    dialog_ = save ? Dialog::Export : Dialog::Import;
+    dialog_ = Dialog::Import;
     dialogError_.clear();
     path_[0] = '\0';
-    std::snprintf(fileName_.data(), fileName_.size(), "%s", save ? "profile.toml" : "");
+}
+void MainWindow::openSave()
+{
+    dialog_ = Dialog::Save;
+    dialogError_.clear();
+    saveTag_[0] = '\0';
 }
 // The profiles with changes are listed, and all of them are picked to start with.
 void MainWindow::openApply()
@@ -556,7 +561,7 @@ void MainWindow::drawBackupList(const float belowList)
         : ImGui::CalcTextSize(dialogError_.c_str(), nullptr, false, ImGui::GetContentRegionAvail().x).y + style.ItemSpacing.y;
     ImGui::BeginChild("Backups", ImVec2(0, -(belowList + errorHeight)), ImGuiChildFlags_Borders,
                       ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
-    if (backups_.empty()) ImGui::TextDisabled("No backups yet. One is saved before every apply.");
+    if (backups_.empty()) ImGui::TextDisabled("No backups yet. One is saved before every apply, or press Save.");
     // A table: the date it was saved (dimmed) and the tag (bright, blank when there is none).
     if (!backups_.empty() && ImGui::BeginTable("BackupRows", 2, ImGuiTableFlags_ScrollY | ImGuiTableFlags_RowBg)) {
         ImGui::TableSetupColumn("Saved", ImGuiTableColumnFlags_WidthFixed, ImGui::CalcTextSize("0000-00-00 00:00:00").x + 24.f);
@@ -590,7 +595,7 @@ void MainWindow::drawBackupList(const float belowList)
 }
 void MainWindow::drawBackups()
 {
-    dialog::title("Backups", "A backup is saved before every apply.");
+    dialog::title("Backups", "A backup is saved before every apply, and when you press Save.");
     if (!ImGui::BeginTabBar("BackupTabs")) return;
     const bool chosen = backupChoice_.has_value();
     // What is under the list: the row of buttons, and in the Manage tab the tag row too (plus the gaps between them).
@@ -736,20 +741,43 @@ void MainWindow::finishDialog()
     dialogError_.clear();
     ImGui::CloseCurrentPopup();
 }
-void MainWindow::saveFile(bool overwrite)
+// Saves the profile on screen, with its edits, into the backups, so it can be loaded back and tagged there like any
+// other. The tag is optional; if it is refused the backup is still saved and the message says so.
+void MainWindow::saveBackup()
 {
     try {
-        auto target = std::filesystem::path(path_.data());
-        if (target.extension().empty()) target += ".toml";
-        if (target.filename().empty()) throw std::runtime_error("Choose a file name.");
-        hhkbs::keymap::writeProfile(target, keymap_, overwrite);
+        const auto directory = hhkbs::keymap::backupDirectory();
+        std::filesystem::create_directories(directory);
+        const auto path = directory / hhkbs::keymap::backupFileName(std::time(nullptr), selectedProfile_.value_or(0));
+        hhkbs::keymap::writeProfile(path, keymap_, false);
         savedBytes_ = keymap_.toBytes();
-        message_ = "Exported " + target.string();
-        directory_ = target.parent_path();
+        message_ = "Saved as backup " + path.filename().string();
+        if (saveTag_[0] != '\0') {
+            try {
+                for (const auto& entry : hhkbs::keymap::listBackups(directory))
+                    if (entry.path == path) hhkbs::keymap::setBackupTag(directory, entry, saveTag_.data());
+            } catch (const std::exception& error) { message_ += ". The tag was not set: " + std::string(error.what()); }
+        }
+        refreshBackupCount();
         const auto action = std::exchange(pending_, Action::None);
         finishDialog();
         perform(action);
-    } catch (const std::exception& error) { dialogError_ = error.what(); dialog_ = Dialog::Export; }
+    } catch (const std::exception& error) { dialogError_ = error.what(); }
+}
+
+void MainWindow::drawSave()
+{
+    dialog::title("Save to backups");
+    dialog::hint("Saves the profile on screen, with your edits, as a backup you can load back from Backups.");
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted("Tag (optional)");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(-1);
+    const bool entered = ImGui::InputText("##savetag", saveTag_.data(), saveTag_.size(), ImGuiInputTextFlags_EnterReturnsTrue);
+    dialog::error(dialogError_);
+    const int hit = dialog::footer({{"Cancel"}, {"Save", true}});
+    if (hit == 0) cancelDialog();
+    else if (hit == 1 || entered) saveBackup();
 }
 
 namespace {
@@ -784,8 +812,7 @@ void drawFolderIcon(ImDrawList* draw, ImVec2 topLeft, float height)
 
 void MainWindow::drawFiles()
 {
-    const bool save = dialog_ == Dialog::Export;
-    dialog::title(save ? "Export TOML profile" : "Import TOML profile");
+    dialog::title("Import TOML profile");
 
     // Path bar: up button plus an editable folder; typing a .toml file path selects that file.
     if (shownDir_ != directory_) {
@@ -810,7 +837,6 @@ void MainWindow::drawFiles()
         else if (std::filesystem::is_regular_file(entered, ec)) {
             goTo(entered.parent_path());
             std::snprintf(path_.data(), path_.size(), "%s", (directory_ / entered.filename()).c_str());
-            std::snprintf(fileName_.data(), fileName_.size(), "%s", entered.filename().c_str());
         } else dialogError_ = "That folder is unavailable.";
     }
 
@@ -836,7 +862,7 @@ void MainWindow::drawFiles()
         return a.directory != b.directory ? a.directory > b.directory : a.path.filename() < b.path.filename();
     });
 
-    const std::filesystem::path chosen = save ? directory_ / fileName_.data() : std::filesystem::path(path_.data());
+    const std::filesystem::path chosen(path_.data());
     ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(8, 4));
     ImGui::BeginChild("Files", ImVec2(0, 250), ImGuiChildFlags_Borders);
     if (ImGui::BeginTable("files", 3, ImGuiTableFlags_ScrollY | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingFixedFit)) {
@@ -869,11 +895,8 @@ void MainWindow::drawFiles()
             if (entry.directory) { if (doubleClick) goTo(entry.path); continue; }
             dialogError_.clear();
             std::snprintf(path_.data(), path_.size(), "%s", entry.path.c_str());
-            std::snprintf(fileName_.data(), fileName_.size(), "%s", name.c_str());
-            if (doubleClick && !save) {
-                // Same path as the Import button below.
-                importPath_ = entry.path;
-            }
+            // A double click imports at once, the same as the Import button below.
+            if (doubleClick) importPath_ = entry.path;
         }
         if (entries.empty()) {
             ImGui::TableNextRow();
@@ -885,41 +908,25 @@ void MainWindow::drawFiles()
     ImGui::EndChild();
     ImGui::PopStyleVar();
 
-    if (save) {
-        ImGui::AlignTextToFramePadding();
-        ImGui::TextUnformatted("File name");
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(-1);
-        ImGui::InputText("##name", fileName_.data(), fileName_.size());
-    }
     dialog::error(dialogError_);
-    const bool ready = save ? fileName_[0] != '\0' : (path_[0] != '\0' || !importPath_.empty());
-    const int hit = dialog::footer({{"Cancel"}, {save ? "Export" : "Import", true, false, ready}});
+    const bool ready = path_[0] != '\0' || !importPath_.empty();
+    const int hit = dialog::footer({{"Cancel"}, {"Import", true, false, ready}});
     if (hit == 0) { cancelDialog(); return; }
     const bool pressed = hit == 1;
     if (!pressed && importPath_.empty()) return;
     try {
-        if (save) {
-            auto target = directory_ / fileName_.data();
-            if (target.extension().empty()) target += ".toml";
-            std::snprintf(path_.data(), path_.size(), "%s", target.c_str());
-            std::error_code ec;
-            if (std::filesystem::exists(std::filesystem::symlink_status(target, ec))) dialog_ = Dialog::Overwrite;
-            else saveFile(false);
-        } else {
-            const auto target = importPath_.empty() ? std::filesystem::path(path_.data()) : importPath_;
-            importPath_.clear();
-            auto profile = hhkbs::keymap::readProfile(target);
-            keymap_ = std::move(profile);
-            useKeyboardAsReference();
-            savedBytes_ = keymap_.toBytes();
-            loaded_ = true;
-            summary_ = "Imported " + target.filename().string();
-            status_ = "Imported profile";
-            message_.clear();
-            directory_ = target.parent_path();
-            finishDialog();
-        }
+        const auto target = importPath_.empty() ? std::filesystem::path(path_.data()) : importPath_;
+        importPath_.clear();
+        auto profile = hhkbs::keymap::readProfile(target);
+        keymap_ = std::move(profile);
+        useKeyboardAsReference();
+        savedBytes_ = keymap_.toBytes();
+        loaded_ = true;
+        summary_ = "Imported " + target.filename().string();
+        status_ = "Imported profile";
+        message_.clear();
+        directory_ = target.parent_path();
+        finishDialog();
     } catch (const std::exception& error) { importPath_.clear(); dialogError_ = error.what(); }
 }
 
@@ -997,26 +1004,20 @@ void MainWindow::drawDialog()
         else if (cancelled) cancelDialog();
     } else if (dialog_ == Dialog::Unsaved) {
         dialog::title("Unsaved keymap changes");
-        ImGui::TextWrapped("Export the modified profile before continuing?");
+        ImGui::TextWrapped("Save the modified profile to the backups before continuing?");
         dialog::error(dialogError_);
-        const int hit = dialog::footer({{"Cancel"}, {"Discard and continue"}, {"Export first", true}});
+        const int hit = dialog::footer({{"Cancel"}, {"Discard and continue"}, {"Save first", true}});
         if (hit == 0) cancelDialog();
         else if (hit == 1) {
             const auto action = std::exchange(pending_, Action::None);
             finishDialog();
             perform(action);
-        } else if (hit == 2) openFiles(true);
-    } else if (dialog_ == Dialog::Import || dialog_ == Dialog::Export) drawFiles();
+        } else if (hit == 2) openSave();
+    } else if (dialog_ == Dialog::Import) drawFiles();
+    else if (dialog_ == Dialog::Save) drawSave();
     else if (dialog_ == Dialog::Backups) drawBackups();
     else if (dialog_ == Dialog::CleanBackups) drawCleanBackups();
-    else if (dialog_ == Dialog::Overwrite) {
-        dialog::title("Replace existing file?");
-        ImGui::TextWrapped("%s", path_.data());
-        dialog::error(dialogError_);
-        const int hit = dialog::footer({{"Back"}, {"Replace file", false, true}});
-        if (hit == 0) dialog_ = Dialog::Export;
-        else if (hit == 1) saveFile(true);
-    } else if (dialog_ == Dialog::Apply) {
+    else if (dialog_ == Dialog::Apply) {
         dialog::title("Apply to keyboard");
         const auto edited = editedProfiles();
         bool anyPicked = false;
@@ -1224,7 +1225,8 @@ void MainWindow::draw()
     if (ImGui::Button("Import")) request(Action::Import);
     ImGui::SameLine();
     ImGui::BeginDisabled(!loaded_);
-    if (ImGui::Button("Export")) openFiles(true);
+    if (ImGui::Button("Save")) openSave();
+    ImGui::SetItemTooltip("Save the profile on screen, with your edits, to the backups");
     ImGui::EndDisabled();
     ImGui::SameLine();
     const auto backupsLabel = "Backups (" + std::to_string(backupCount_) + ")";
