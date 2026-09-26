@@ -111,6 +111,30 @@ bool MainWindow::anyUnsaved() const
     return false;
 }
 
+// The profiles with work that has not been saved, for the prompt shown when the window is closed.
+std::string MainWindow::unsavedList() const
+{
+    std::string list;
+    const auto add = [&](const std::string& name) { list += (list.empty() ? "" : ", ") + name; };
+    if (unsaved()) add(selectedProfile_ ? "Profile " + std::to_string(*selectedProfile_ + 1) + " (on screen)" : "the profile on screen");
+    for (std::uint16_t i = 0; i < 4; ++i)
+        if (stashed_[i] && stashed_[i]->keymap.toBytes() != stashed_[i]->savedBytes) add("Profile " + std::to_string(i + 1));
+    return list;
+}
+
+// Brings a profile with unsaved work onto the screen when the one shown has none, so the prompt's Save acts on it.
+void MainWindow::showFirstUnsaved()
+{
+    if (unsaved()) return;
+    for (std::uint16_t i = 0; i < 4; ++i) {
+        if (stashed_[i] && stashed_[i]->keymap.toBytes() != stashed_[i]->savedBytes) {
+            stashShown();
+            showStashed(i);
+            return;
+        }
+    }
+}
+
 // The work on the shown profile, wherever it is kept: the editor for the profile on screen, a stash for the others.
 const Keymap* MainWindow::draft(const std::uint16_t profile) const
 {
@@ -457,7 +481,11 @@ void MainWindow::selectProfile(std::uint16_t profile)
 void MainWindow::request(Action action)
 {
     // Closing loses the work on every profile; the other actions only replace the one on screen.
-    if (action == Action::Close ? anyUnsaved() : unsaved()) { pending_ = action; dialog_ = Dialog::Unsaved; }
+    if (action == Action::Close ? anyUnsaved() : unsaved()) {
+        if (action == Action::Close) showFirstUnsaved();
+        pending_ = action;
+        dialog_ = Dialog::Unsaved;
+    }
     else perform(action);
 }
 void MainWindow::perform(Action action)
@@ -471,7 +499,11 @@ void MainWindow::perform(Action action)
         pendingBackup_.reset();
         if (!loadBackup(entry)) message_ = dialogError_;
     }
-    else if (action == Action::Close) close_ = true;
+    else if (action == Action::Close) {
+        // After saving one profile, the next one with unsaved work is asked about, until none is left.
+        if (anyUnsaved()) { showFirstUnsaved(); pending_ = Action::Close; dialog_ = Dialog::Unsaved; }
+        else close_ = true;
+    }
 }
 void MainWindow::openSave()
 {
@@ -797,8 +829,10 @@ void MainWindow::saveBackup()
 
 void MainWindow::drawSave()
 {
-    dialog::title("Save to backups");
-    dialog::hint("Saves the profile on screen, with your edits, as a backup you can load back from Backups.");
+    // Which profile is being saved is named, since several can be waiting when the window is being closed.
+    const std::string name = selectedProfile_ ? "Profile " + std::to_string(*selectedProfile_ + 1) : "The profile on screen";
+    dialog::title(("Save " + name + " to backups").c_str());
+    dialog::hint((name + " is saved with your edits, as a backup you can load back from Backups.").c_str());
     ImGui::AlignTextToFramePadding();
     ImGui::TextUnformatted("Tag (optional)");
     ImGui::SameLine();
@@ -1025,14 +1059,20 @@ void MainWindow::drawDialog()
         else if (cancelled) cancelDialog();
     } else if (dialog_ == Dialog::Unsaved) {
         dialog::title("Unsaved keymap changes");
-        ImGui::TextWrapped("Save the modified profile to the backups before continuing?");
+        const bool closing = pending_ == Action::Close;
+        if (closing) ImGui::TextWrapped("Not saved: %s. Save the profile on screen to the backups before closing? "
+                                        "Closing without saving loses every one of them.", unsavedList().c_str());
+        else ImGui::TextWrapped("Save the modified profile to the backups before continuing?");
         dialog::error(dialogError_);
-        const int hit = dialog::footer({{"Cancel"}, {"Discard and continue"}, {"Save first", true}});
+        // Save first acts on the profile on screen; it says which one, since more than one can be waiting.
+        const std::string saveLabel = selectedProfile_ ? "Save Profile " + std::to_string(*selectedProfile_ + 1) : "Save first";
+        const int hit = dialog::footer({{"Cancel"}, {closing ? "Close without saving" : "Discard and continue"}, {saveLabel.c_str(), true}});
         if (hit == 0) cancelDialog();
         else if (hit == 1) {
             const auto action = std::exchange(pending_, Action::None);
             finishDialog();
-            perform(action);
+            if (action == Action::Close) close_ = true;
+            else perform(action);
         } else if (hit == 2) openSave();
     } else if (dialog_ == Dialog::Save) drawSave();
     else if (dialog_ == Dialog::Backups) drawBackups();
@@ -1069,17 +1109,33 @@ void MainWindow::drawDialog()
     } else if (dialog_ == Dialog::Defaults) {
         dialog::title("Load default keymap");
         const Keymap defaults(KeyboardLayout::usWindowsFactoryProfile());
-        const auto changes = hhkbs::keymap::diffProfiles(keymap_.layers(), defaults.layers()).size();
-        ImGui::TextWrapped("Replace the keys of the profile on screen with the built-in US default keymap? "
-                           "%zu key%s change, and your edits to this profile are lost. "
-                           "The keyboard is not changed; it is written only when you apply it.", changes, changes == 1 ? "" : "s");
+        if (loaded_) {
+            const auto changes = hhkbs::keymap::diffProfiles(keymap_.layers(), defaults.layers()).size();
+            ImGui::TextWrapped("Replace the keys of the profile on screen with the built-in US default keymap? "
+                               "%zu key%s change, and your edits to this profile are lost. "
+                               "The keyboard is not changed; it is written only when you apply it.", changes, changes == 1 ? "" : "s");
+        } else ImGui::TextWrapped("Load the built-in US default keymap into the editor? "
+                                  "The keyboard is not changed; it is written only when you apply it.");
         dialog::error(dialogError_);
         const int hit = dialog::footer({{"Back"}, {"Load default keymap", true}});
         if (hit == 0) dialog_ = Dialog::Backups;
         else if (hit == 1) {
-            for (std::size_t layer=0; layer<Keymap::layerCount; ++layer)
-                for (std::size_t slot=0; slot<Keymap::keysPerLayer; ++slot)
-                    keymap_.setScanCode(layer, slot, defaults.scanCode(layer,slot));
+            // With nothing on screen yet the defaults become the profile on screen, like a file or a backup would.
+            if (loaded_) {
+                // The keys change but what they are compared with does not, so the marks show what differs from the keyboard.
+                for (std::size_t layer=0; layer<Keymap::layerCount; ++layer)
+                    for (std::size_t slot=0; slot<Keymap::keysPerLayer; ++slot)
+                        keymap_.setScanCode(layer, slot, defaults.scanCode(layer,slot));
+                savedBytes_ = keymap_.toBytes();  // the built-in keymap is not something that can be lost
+            } else {
+                keymap_ = defaults;
+                loaded_ = true;
+                useKeyboardAsReference();
+                savedBytes_ = keymap_.toBytes();
+                summary_ = "Default keymap";
+                status_ = "Loaded default keymap";
+                message_.clear();
+            }
             finishDialog();
         }
     }
@@ -1253,7 +1309,10 @@ void MainWindow::draw()
     if (ImGui::Button("Backups")) openBackups();
     ImGui::SameLine();
     ImGui::BeginDisabled(!loaded_ || !keymap_.isModified());
-    if (ImGui::Button("Discard changes")) keymap_.reset();
+    if (ImGui::Button("Discard changes")) {
+        keymap_.reset();
+        savedBytes_ = keymap_.toBytes();  // it is the keyboard's content again, so there is nothing left to lose
+    }
     ImGui::SetItemTooltip("Put the profile on screen back to what the keyboard holds");
     ImGui::EndDisabled();
     ImGui::EndDisabled();
