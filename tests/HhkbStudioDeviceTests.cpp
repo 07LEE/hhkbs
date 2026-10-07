@@ -177,6 +177,8 @@ public:
             }
         } else if (address == 0x1001) {
             writeText(response, productName);
+        } else if (address == 0x1007) {
+            writeText(response, serialNumber);
         } else if (address == 0x1101) {
             response[4] = currentProfile;
         }
@@ -186,6 +188,7 @@ public:
     std::vector<std::uint8_t> memory;
     std::array<std::vector<std::uint8_t>, 4> stored;
     std::string productName = "HHKB-Studio";
+    std::string serialNumber = "serial";
     std::uint8_t currentProfile = 2;
     std::size_t writes = 0;
     std::size_t switches = 0;
@@ -212,7 +215,7 @@ void profileWriteIsVerifiedByReadBack()
     const auto backup = device.readCurrentProfile();
     const auto profile = patternProfile(3);
 
-    device.requireTarget(2);
+    device.requireTarget(2, "serial");
     device.writeCurrentProfile(profile, backup);
 
     require(transport.memory == profile, "profile was not stored on the device");
@@ -261,7 +264,7 @@ void writeTargetIsChecked()
     HhkbStudioDevice device(wrongProfile);
     bool threw = false;
     try {
-        device.requireTarget(1);
+        device.requireTarget(1, "serial");
     } catch (const hhkbs::device::DeviceError&) {
         threw = true;
     }
@@ -272,11 +275,33 @@ void writeTargetIsChecked()
     HhkbStudioDevice other(wrongDevice);
     threw = false;
     try {
-        other.requireTarget(2);
+        other.requireTarget(2, "serial");
     } catch (const hhkbs::device::DeviceError&) {
         threw = true;
     }
     require(threw, "a non-HHKB device was not rejected");
+
+    // A second keyboard on the same profile is told apart by its serial number.
+    StorageTransport otherKeyboard;
+    otherKeyboard.serialNumber = "other-serial";
+    HhkbStudioDevice sibling(otherKeyboard);
+    threw = false;
+    try {
+        sibling.requireTarget(2, "serial");
+    } catch (const hhkbs::device::DeviceError&) {
+        threw = true;
+    }
+    require(threw, "a keyboard with another serial number was not rejected");
+
+    StorageTransport unknownSerial;
+    HhkbStudioDevice unknown(unknownSerial);
+    threw = false;
+    try {
+        unknown.requireTarget(2, "");
+    } catch (const hhkbs::device::DeviceError&) {
+        threw = true;
+    }
+    require(threw, "a target without a known serial number was accepted");
 
     StorageTransport shortProfile;
     HhkbStudioDevice shortDevice(shortProfile);
@@ -299,7 +324,7 @@ void profileSwitchIsConfirmed()
 
     require(transport.switches == 1, "profile switch was not sent once");
     require(transport.currentProfile == 3, "profile switch did not take effect");
-    device.requireTarget(3);
+    device.requireTarget(3, "serial");
 }
 
 void invalidProfileSwitchIsRejectedBeforeSending()
@@ -370,7 +395,7 @@ void writeToOtherProfileKeepsActiveProfile()
     const auto profile = patternProfile(9);
 
     device.runOnProfile(3, [&] {
-        device.requireTarget(3);
+        device.requireTarget(3, "serial");
         device.writeCurrentProfile(profile, device.readCurrentProfile());
     });
 
@@ -410,6 +435,30 @@ void unreturnableProfileIsReported()
     }
 
     require(threw, "a keyboard left on another profile was not reported");
+}
+
+void writeSurvivesFailedReturnToProfile()
+{
+    StorageTransport transport;
+    transport.ignoreSwitchNumber = 2;
+    HhkbStudioDevice device(transport);
+    const auto profile = patternProfile(9);
+
+    bool written = false;
+    bool threw = false;
+    try {
+        device.runOnProfile(1, [&] {
+            device.writeCurrentProfile(profile, device.readCurrentProfile());
+            written = true;
+        });
+    } catch (const hhkbs::device::DeviceError&) {
+        threw = true;
+    }
+
+    // The error does not mean the write failed; callers have to track that themselves.
+    require(threw, "a keyboard left on another profile was not reported");
+    require(written, "the write did not finish before the return failed");
+    require(transport.memory == profile, "the written profile was lost");
 }
 
 void profileSwitchPacketIsEncoded()
@@ -740,6 +789,7 @@ int main()
         failedWriteRestoresBackup();
         mismatchedReadBackRestoresBackup();
         writeTargetIsChecked();
+        writeSurvivesFailedReturnToProfile();
         profileSwitchPacketIsEncoded();
         profileSwitchIsConfirmed();
         invalidProfileSwitchIsRejectedBeforeSending();

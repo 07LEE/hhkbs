@@ -183,12 +183,19 @@ void HhkbStudioDevice::switchProfile(const std::uint16_t profile)
     }
 }
 
-void HhkbStudioDevice::requireTarget(const std::uint16_t expectedProfile)
+void HhkbStudioDevice::requireTarget(const std::uint16_t expectedProfile, const std::string& expectedSerial)
 {
     if (readProductName() != "HHKB-Studio") {
         throw DeviceError(
             DeviceErrorCode::Protocol,
             "The connected device is not an HHKB Studio");
+    }
+    if (expectedSerial.empty() ||
+        protocol::decodeText(readProperty(protocol::Property::SerialNumber)) != expectedSerial) {
+        throw DeviceError(
+            DeviceErrorCode::Protocol,
+            "The connected keyboard is not the one that was read. "
+            "Read from the keyboard again before applying.");
     }
     if (activeProfile() != expectedProfile) {
         throw DeviceError(

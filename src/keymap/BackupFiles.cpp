@@ -28,6 +28,19 @@ std::string backupFileName(const std::time_t when, const std::uint16_t profile)
     return "backup-" + std::string(stamp) + "-profile" + std::to_string(profile + 1) + ".toml";
 }
 
+std::filesystem::path newBackupPath(const std::filesystem::path& directory, const std::time_t when,
+                                    const std::uint16_t profile)
+{
+    constexpr int attempts = 600;
+    for (int second = 0; second < attempts; ++second) {
+        const auto path = directory / backupFileName(when + second, profile);
+        std::error_code error;
+        // symlink_status does not follow links, so a dangling symlink counts as taken.
+        if (std::filesystem::symlink_status(path, error).type() == std::filesystem::file_type::not_found) return path;
+    }
+    throw std::runtime_error("No free backup file name was found");
+}
+
 namespace {
 
 std::filesystem::path tagPath(std::filesystem::path backup)
