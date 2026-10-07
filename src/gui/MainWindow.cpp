@@ -391,7 +391,7 @@ void MainWindow::beginApply()
                         // Keep a copy of what the keyboard held; without it a failed write cannot be undone by hand.
                         const auto directory = hhkbs::keymap::backupDirectory();
                         std::filesystem::create_directories(directory);
-                        path = directory / hhkbs::keymap::backupFileName(std::time(nullptr), profile);
+                        path = hhkbs::keymap::newBackupPath(directory, std::time(nullptr), profile);
                         hhkbs::keymap::writeProfile(path, hhkbs::keymap::Keymap(backup), false);
 
                         device.writeCurrentProfile(bytes, backup);
@@ -828,7 +828,7 @@ void MainWindow::saveBackup()
     try {
         const auto directory = hhkbs::keymap::backupDirectory();
         std::filesystem::create_directories(directory);
-        const auto path = directory / hhkbs::keymap::backupFileName(std::time(nullptr), selectedProfile_.value_or(0));
+        const auto path = hhkbs::keymap::newBackupPath(directory, std::time(nullptr), selectedProfile_.value_or(0));
         hhkbs::keymap::writeProfile(path, keymap_, false);
         savedBytes_ = keymap_.toBytes();
         message_ = "Saved as backup " + path.filename().string();

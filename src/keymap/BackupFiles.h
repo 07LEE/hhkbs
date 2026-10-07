@@ -22,6 +22,12 @@ inline constexpr std::size_t maxBackupTagLength = 40;  // characters
 // backup-YYYYmmdd-HHMMSS-profileN.toml, where N is the 1-based profile number.
 [[nodiscard]] std::string backupFileName(std::time_t when, std::uint16_t profile);
 
+// A path in `directory` for a new backup of `profile` that nothing uses yet. When the name for `when` is taken, the
+// time is moved on a second at a time, so the name keeps its form and the newer backup still sorts as newer.
+// Throws when no free name is found.
+[[nodiscard]] std::filesystem::path newBackupPath(const std::filesystem::path& directory, std::time_t when,
+                                                  std::uint16_t profile);
+
 // Backups in the directory, newest first. Files with any other name are ignored.
 [[nodiscard]] std::vector<BackupEntry> listBackups(const std::filesystem::path& directory);
 

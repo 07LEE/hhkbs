@@ -110,6 +110,23 @@ int main() {
         if (written.size() != 1 || written[0].profile != 2)
             throw std::runtime_error("A backup file name could not be read back");
 
+        // Two backups of one profile in the same second get different names, and the later one lists as newer.
+        {
+            const auto crowded = directory / "crowded";
+            std::filesystem::create_directories(crowded);
+            const std::time_t now = std::time(nullptr);
+            const auto first = newBackupPath(crowded, now, 0);
+            std::ofstream(first) << "x";
+            const auto second = newBackupPath(crowded, now, 0);
+            if (second == first) throw std::runtime_error("A second backup in the same second must not reuse the name");
+            std::ofstream(second) << "x";
+            const auto listed = listBackups(crowded);
+            if (listed.size() != 2 || listed[0].path != second || listed[1].path != first)
+                throw std::runtime_error("Backups from the same second must be listed with the later one first");
+            if (newBackupPath(crowded, now, 1) != crowded / backupFileName(now, 1))
+                throw std::runtime_error("Another profile does not share the name");
+        }
+
         // Notes on backups.
         {
             auto backup = written[0];
