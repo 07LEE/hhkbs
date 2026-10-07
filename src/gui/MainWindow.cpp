@@ -562,7 +562,7 @@ void MainWindow::pollDrop()
 {
     if (droppedFile_.empty()) return;
     // A dialog or a running keyboard operation has the window's attention; the file is set aside, not imported.
-    if (dialog_ != Dialog::None || busy()) { droppedFile_.clear(); return; }
+    if (dialog_ != Dialog::None || busy()) return;
     requestImport(std::exchange(droppedFile_, {}));
 }
 // The profiles with changes are listed, and all of them are picked to start with.
