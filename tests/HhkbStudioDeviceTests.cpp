@@ -501,6 +501,11 @@ void informationCommandsAreDecoded()
             && transport.requests.front()[1] == 0x10
             && transport.requests.front()[2] == 0x01,
         "product request was encoded incorrectly");
+
+    // The serial number alone is one request, not the whole set.
+    const auto before = transport.requests.size();
+    require(device.readSerialNumber() == information.serialNumber, "serial number was not read on its own");
+    require(transport.requests.size() == before + 1, "reading the serial number took more than one request");
 }
 
 void protocolPacketsAreEncodedAndDecoded()

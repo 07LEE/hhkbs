@@ -20,6 +20,11 @@ std::string HhkbStudioDevice::readProductName()
     return protocol::decodeText(readProperty(protocol::Property::ProductName));
 }
 
+std::string HhkbStudioDevice::readSerialNumber()
+{
+    return protocol::decodeText(readProperty(protocol::Property::SerialNumber));
+}
+
 KeyboardInformation HhkbStudioDevice::readInformation()
 {
     const auto textProperty = [this](const protocol::Property property) {
@@ -191,7 +196,7 @@ void HhkbStudioDevice::requireTarget(const std::uint16_t expectedProfile, const 
             "The connected device is not an HHKB Studio");
     }
     if (expectedSerial.empty() ||
-        protocol::decodeText(readProperty(protocol::Property::SerialNumber)) != expectedSerial) {
+        readSerialNumber() != expectedSerial) {
         throw DeviceError(
             DeviceErrorCode::Protocol,
             "The connected keyboard is not the one that was read. "

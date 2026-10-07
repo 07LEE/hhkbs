@@ -26,7 +26,7 @@ std::unique_ptr<hhkbs::device::HidrawTransport> openStudio(const bool usbOnly = 
             auto transport = std::make_unique<hhkbs::device::HidrawTransport>(item.path);
             hhkbs::device::HhkbStudioDevice device(*transport);
             if (device.readProductName() != "HHKB-Studio") continue;
-            if (serial.empty() || device.readInformation().serialNumber == serial) return transport;
+            if (serial.empty() || device.readSerialNumber() == serial) return transport;
             otherKeyboard = true;
         } catch (const std::exception&) {}
     }
