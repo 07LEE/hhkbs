@@ -1,4 +1,5 @@
 #pragma once
+#include "app/BackupList.h"
 #include "app/KeyboardTasks.h"
 #include "app/ProfileWorkspace.h"
 #include "device/PadMonitor.h"
@@ -72,14 +73,10 @@ private:
     void finishDialog();
     void cancelDialog();
 
-    std::vector<hhkbs::keymap::BackupEntry> backups_;
-    std::optional<std::size_t> backupChoice_;
-    std::array<char, 256> tagInput_{};  // the tag being edited for the chosen backup
-    std::optional<std::size_t> tagShownFor_;  // the backup tagInput_ was filled from
+    hhkbs::app::BackupList backupList_{hhkbs::keymap::backupDirectory()};  // the Backups window's list and tag box
     std::optional<hhkbs::keymap::BackupEntry> pendingBackup_;
     std::optional<BackupTab> selectTab_;  // the Backups tab to come up on
     bool confirmDelete_ = false;  // the delete confirmation is open over the Backups window
-    int keepBackups_ = 5;
     std::future<ScanResult> scan_;
     std::future<ApplyResult> apply_;
     std::future<PadResult> pad_;
