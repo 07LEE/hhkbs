@@ -73,86 +73,12 @@ MainWindow::MainWindow(bool demoMode)
     if (const char* home = std::getenv("HOME"); home && std::filesystem::is_directory(home, error))
         directory_ = home;
     if (demoMode) {
-        keymap_.load(KeyboardLayout::demoProfile());
-        savedBytes_ = keymap_.toBytes();
-        loaded_ = true;
+        work_.keymap.load(KeyboardLayout::demoProfile());
+        work_.savedBytes = work_.keymap.toBytes();
+        work_.loaded = true;
         status_ = "Demo profile";
-        summary_ = "Offline US profile / Changes are kept in memory";
+        work_.summary = "Offline US profile / Changes are kept in memory";
     } else beginScan();
-}
-
-bool MainWindow::unsaved() const { return loaded_ && keymap_.toBytes() != savedBytes_; }
-
-bool MainWindow::anyUnsaved() const
-{
-    if (unsaved()) return true;
-    for (const auto& stash : stashed_)
-        if (stash && stash->keymap.toBytes() != stash->savedBytes) return true;
-    return false;
-}
-
-// The profiles with work that has not been saved, for the prompt shown when the window is closed.
-std::string MainWindow::unsavedList() const
-{
-    std::string list;
-    const auto add = [&](const std::string& name) { list += (list.empty() ? "" : ", ") + name; };
-    if (unsaved()) add(selectedProfile_ ? "Profile " + std::to_string(*selectedProfile_ + 1) + " (on screen)" : "the profile on screen");
-    for (std::uint16_t i = 0; i < 4; ++i)
-        if (stashed_[i] && stashed_[i]->keymap.toBytes() != stashed_[i]->savedBytes) add("Profile " + std::to_string(i + 1));
-    return list;
-}
-
-// Brings a profile with unsaved work onto the screen when the one shown has none, so the prompt's Save acts on it.
-void MainWindow::showFirstUnsaved()
-{
-    if (unsaved()) return;
-    for (std::uint16_t i = 0; i < 4; ++i) {
-        if (stashed_[i] && stashed_[i]->keymap.toBytes() != stashed_[i]->savedBytes) {
-            stashShown();
-            showStashed(i);
-            return;
-        }
-    }
-}
-
-// The work on the shown profile, wherever it is kept: the editor for the profile on screen, a stash for the others.
-const Keymap* MainWindow::draft(const std::uint16_t profile) const
-{
-    if (selectedProfile_ == profile) return loaded_ ? &keymap_ : nullptr;
-    return stashed_[profile] ? &stashed_[profile]->keymap : nullptr;
-}
-
-// The profiles whose work differs from what the keyboard holds, so applying would change something.
-std::vector<std::uint16_t> MainWindow::editedProfiles() const
-{
-    std::vector<std::uint16_t> profiles;
-    for (std::uint16_t i = 0; i < 4; ++i)
-        if (const auto* keymap = draft(i); keymap && keymap->isModified()) profiles.push_back(i);
-    return profiles;
-}
-
-void MainWindow::stashShown()
-{
-    if (selectedProfile_ && loaded_) stashed_[*selectedProfile_] = Stash{keymap_, savedBytes_, summary_};
-}
-
-void MainWindow::showStashed(const std::uint16_t profile)
-{
-    auto stash = std::move(*stashed_[profile]);
-    stashed_[profile].reset();
-    keymap_ = std::move(stash.keymap);
-    savedBytes_ = std::move(stash.savedBytes);
-    summary_ = std::move(stash.summary);
-    selectedProfile_ = profile;
-    loaded_ = true;
-    message_.clear();
-}
-
-// Content that came from a file or a backup is compared with what the keyboard holds for the shown profile, when that
-// has been read, so the keys it would change are marked and Discard changes goes back to the keyboard's content.
-void MainWindow::useKeyboardAsReference()
-{
-    if (selectedProfile_ && !keyboardBytes_[*selectedProfile_].empty()) keymap_.rebase(keyboardBytes_[*selectedProfile_]);
 }
 
 void MainWindow::beginScan(std::optional<std::uint16_t> target, const bool reconnect)
@@ -164,7 +90,7 @@ void MainWindow::beginScan(std::optional<std::uint16_t> target, const bool recon
         message_ = "Checking available HID interfaces...";
     }
     // A profile chosen on the keyboard that is on screen is read from that keyboard, not from whichever answers first.
-    scan_ = std::async(std::launch::async, hhkbs::app::scanKeyboard, target, reconnect, target ? keyboardSerial_ : std::string());
+    scan_ = std::async(std::launch::async, hhkbs::app::scanKeyboard, target, reconnect, target ? work_.keyboardSerial : std::string());
 }
 
 void MainWindow::pollScan()
@@ -192,21 +118,7 @@ void MainWindow::pollScan()
         status_ = result.status;
         message_ = result.detail;
         if (!result.bytes.empty()) {
-            const auto profile = result.profile.value_or(0);
-            keyboardSerial_ = result.serial;
-            keyboardBytes_[profile] = result.bytes;
-            Keymap fresh(result.bytes);
-            if (selectedProfile_ != profile) {
-                // Another profile comes onto the screen: the one that was there is kept, and this one continues where
-                // it was left, with edits it may have. Only the keyboard's content is brought up to date.
-                stashShown();
-                if (stashed_[profile]) showStashed(profile);
-                if (selectedProfile_ == profile && keymap_.isModified()) keymap_.rebase(result.bytes);
-                else keymap_ = std::move(fresh);
-            } else keymap_ = std::move(fresh);
-            if (!keymap_.isModified()) savedBytes_ = keymap_.toBytes();
-            loaded_ = true;
-            selectedProfile_ = profile;
+            work_.adoptKeyboardProfile(result.profile.value_or(0), result.bytes, result.serial);
             disconnected_ = false;
             if (!result.path.empty()) {
                 pads_.start(result.path);
@@ -214,7 +126,7 @@ void MainWindow::pollScan()
                 for (std::size_t pad = 0; pad < result.pads.size(); ++pad)
                     if (result.pads[pad]) pads_.set(pad, *result.pads[pad]);
             }
-            summary_ = result.detail;
+            work_.summary = result.detail;
             message_.clear();
         }
     } catch (const std::exception& error) { status_ = "Profile error"; message_ = error.what(); }
@@ -225,7 +137,7 @@ void MainWindow::beginPadChange(const std::size_t pad, const bool on)
     if (busy() || demo_) return;
     status_ = "Switching pad...";
     message_.clear();
-    pad_ = std::async(std::launch::async, hhkbs::app::changePad, pad, on, keyboardSerial_);
+    pad_ = std::async(std::launch::async, hhkbs::app::changePad, pad, on, work_.keyboardSerial);
 }
 
 void MainWindow::pollPadChange()
@@ -256,7 +168,7 @@ void MainWindow::pollConnection()
         if (paths != seenPaths_) { seenPaths_ = paths; settledAt_ = now + std::chrono::seconds(3); }
         if (paths.empty() || now < settledAt_) return;
         nextProbe_ = now + std::chrono::seconds(2);
-        beginScan(selectedProfile_, true);
+        beginScan(work_.selected, true);
         return;
     }
     if (!wasListening_ || pads_.listening()) return;
@@ -270,15 +182,15 @@ void MainWindow::pollConnection()
 
 void MainWindow::beginApply()
 {
-    if (busy() || demo_ || !loaded_) return;
+    if (busy() || demo_ || !work_.loaded) return;
     std::vector<std::pair<std::uint16_t, std::vector<std::uint8_t>>> jobs;
     for (std::uint16_t i = 0; i < 4; ++i)
         if (applyPick_[i])
-            if (const auto* keymap = draft(i)) jobs.emplace_back(i, keymap->toBytes());
+            if (const auto* keymap = work_.draft(i)) jobs.emplace_back(i, keymap->toBytes());
     if (jobs.empty()) return;
     status_ = "Applying...";
     message_ = "Writing to the keyboard. Do not unplug it.";
-    apply_ = std::async(std::launch::async, hhkbs::app::applyProfiles, std::move(jobs), keyboardSerial_);
+    apply_ = std::async(std::launch::async, hhkbs::app::applyProfiles, std::move(jobs), work_.keyboardSerial);
 }
 
 void MainWindow::pollApply()
@@ -288,16 +200,7 @@ void MainWindow::pollApply()
         const auto result = apply_.get();
         message_ = result.message;
         // A written profile now holds its work, so it stops counting as changed.
-        for (const auto profile : result.written) {
-            keyboardBytes_[profile] = result.bytes[profile];
-            if (selectedProfile_ == profile) {
-                keymap_.rebase(result.bytes[profile]);
-                savedBytes_ = keymap_.toBytes();
-            } else if (stashed_[profile]) {
-                stashed_[profile]->keymap.rebase(result.bytes[profile]);
-                stashed_[profile]->savedBytes = stashed_[profile]->keymap.toBytes();
-            }
-        }
+        for (const auto profile : result.written) work_.markWritten(profile, result.bytes[profile]);
         status_ = result.ok ? "Applied" : "Apply failed";
     } catch (const std::exception& error) { status_ = "Apply failed"; message_ = error.what(); }
 }
@@ -307,9 +210,9 @@ void MainWindow::pollApply()
 void MainWindow::beginPreview()
 {
     if (busy() || demo_ || bluetooth_) return;
-    const auto profiles = editedProfiles();
+    const auto profiles = work_.editedProfiles();
     if (profiles.empty()) { previewDone_ = true; return; }
-    preview_ = std::async(std::launch::async, hhkbs::app::readProfiles, profiles, keyboardSerial_);
+    preview_ = std::async(std::launch::async, hhkbs::app::readProfiles, profiles, work_.keyboardSerial);
 }
 
 void MainWindow::pollPreview()
@@ -323,7 +226,7 @@ void MainWindow::pollPreview()
         preview.error = read.error;
         if (!read.error.empty()) continue;
         try {
-            if (const auto* keymap = draft(read.profile))
+            if (const auto* keymap = work_.draft(read.profile))
                 preview.changes = hhkbs::keymap::diffProfiles(Keymap(read.bytes).layers(), keymap->layers());
         } catch (const std::exception& error) { preview.error = error.what(); }
     }
@@ -339,10 +242,11 @@ void MainWindow::requestClose()
 // the keyboard only the first time.
 void MainWindow::selectProfile(std::uint16_t profile)
 {
-    if (busy() || demo_ || profile == selectedProfile_) return;
-    if (stashed_[profile]) {
-        stashShown();
-        showStashed(profile);
+    if (busy() || demo_ || profile == work_.selected) return;
+    if (work_.stashed[profile]) {
+        work_.stashShown();
+        work_.showStashed(profile);
+        message_.clear();
         return;
     }
     beginScan(profile);
@@ -350,8 +254,8 @@ void MainWindow::selectProfile(std::uint16_t profile)
 void MainWindow::request(Action action)
 {
     // Closing loses the work on every profile; the other actions only replace the one on screen.
-    if (action == Action::Close ? anyUnsaved() : unsaved()) {
-        if (action == Action::Close) showFirstUnsaved();
+    if (action == Action::Close ? work_.anyUnsaved() : work_.unsaved()) {
+        if (action == Action::Close && work_.showFirstUnsaved()) message_.clear();
         pending_ = action;
         dialog_ = Dialog::Unsaved;
     }
@@ -370,7 +274,7 @@ void MainWindow::perform(Action action)
     }
     else if (action == Action::Close) {
         // After saving one profile, the next one with unsaved work is asked about, until none is left.
-        if (anyUnsaved()) { showFirstUnsaved(); pending_ = Action::Close; dialog_ = Dialog::Unsaved; }
+        if (work_.anyUnsaved()) { if (work_.showFirstUnsaved()) message_.clear(); pending_ = Action::Close; dialog_ = Dialog::Unsaved; }
         else close_ = true;
     }
 }
@@ -390,11 +294,11 @@ bool MainWindow::importFile(const std::filesystem::path& path)
 {
     try {
         auto profile = hhkbs::keymap::readProfile(path);
-        keymap_ = std::move(profile);
-        useKeyboardAsReference();
-        savedBytes_ = keymap_.toBytes();
-        loaded_ = true;
-        summary_ = "Imported " + path.filename().string();
+        work_.keymap = std::move(profile);
+        work_.useKeyboardAsReference();
+        work_.savedBytes = work_.keymap.toBytes();
+        work_.loaded = true;
+        work_.summary = "Imported " + path.filename().string();
         status_ = "Imported profile";
         message_.clear();
         directory_ = path.parent_path();
@@ -420,11 +324,11 @@ void MainWindow::pollDrop()
 // The profiles with changes are listed, and all of them are picked to start with.
 void MainWindow::openApply()
 {
-    const auto edited = editedProfiles();
+    const auto edited = work_.editedProfiles();
     applyPick_.fill(false);
     for (const auto profile : edited) applyPick_[profile] = true;
     applyView_ = edited.empty() ? 0 : edited.front();
-    if (selectedProfile_ && std::find(edited.begin(), edited.end(), *selectedProfile_) != edited.end()) applyView_ = *selectedProfile_;
+    if (work_.selected && std::find(edited.begin(), edited.end(), *work_.selected) != edited.end()) applyView_ = *work_.selected;
     previewDone_ = false;
     previews_ = {};
     dialogError_.clear();
@@ -450,11 +354,11 @@ bool MainWindow::loadBackup(const hhkbs::keymap::BackupEntry& entry)
 {
     try {
         auto profile = hhkbs::keymap::readProfile(entry.path);
-        keymap_ = std::move(profile);
-        useKeyboardAsReference();
-        savedBytes_ = keymap_.toBytes();
-        loaded_ = true;
-        summary_ = std::string("Backup ") + (entry.tag.empty() ? "" : "\"" + entry.tag + "\" ") + "from " + entry.timestamp;
+        work_.keymap = std::move(profile);
+        work_.useKeyboardAsReference();
+        work_.savedBytes = work_.keymap.toBytes();
+        work_.loaded = true;
+        work_.summary = std::string("Backup ") + (entry.tag.empty() ? "" : "\"" + entry.tag + "\" ") + "from " + entry.timestamp;
         status_ = "Loaded backup";
         message_.clear();
         finishDialog();
@@ -680,9 +584,9 @@ void MainWindow::saveBackup()
     try {
         const auto directory = hhkbs::keymap::backupDirectory();
         std::filesystem::create_directories(directory);
-        const auto path = hhkbs::keymap::newBackupPath(directory, std::time(nullptr), selectedProfile_.value_or(0));
-        hhkbs::keymap::writeProfile(path, keymap_, false);
-        savedBytes_ = keymap_.toBytes();
+        const auto path = hhkbs::keymap::newBackupPath(directory, std::time(nullptr), work_.selected.value_or(0));
+        hhkbs::keymap::writeProfile(path, work_.keymap, false);
+        work_.savedBytes = work_.keymap.toBytes();
         message_ = "Saved as backup " + path.filename().string();
         if (saveTag_[0] != '\0') {
             try {
@@ -699,7 +603,7 @@ void MainWindow::saveBackup()
 void MainWindow::drawSave()
 {
     // Which profile is being saved is named, since several can be waiting when the window is being closed.
-    const std::string name = selectedProfile_ ? "Profile " + std::to_string(*selectedProfile_ + 1) : "The profile on screen";
+    const std::string name = work_.selected ? "Profile " + std::to_string(*work_.selected + 1) : "The profile on screen";
     dialog::title(("Save " + name + " to backups").c_str());
     dialog::hint((name + " is saved with your edits, as a backup you can load back from Backups.").c_str());
     ImGui::AlignTextToFramePadding();
@@ -924,17 +828,17 @@ void MainWindow::drawDialog()
     // Every dialog draws its own title, error line and footer through dialog::.
     if (dialog_ == Dialog::Assign) {
         bool cancelled = false;
-        if (const auto code = assignment_.draw(cancelled)) { keymap_.setScanCode(layer_, slot_, *code); finishDialog(); }
+        if (const auto code = assignment_.draw(cancelled)) { work_.keymap.setScanCode(layer_, slot_, *code); finishDialog(); }
         else if (cancelled) cancelDialog();
     } else if (dialog_ == Dialog::Unsaved) {
         dialog::title("Unsaved keymap changes");
         const bool closing = pending_ == Action::Close;
         if (closing) ImGui::TextWrapped("Not saved: %s. Save the profile on screen to the backups before closing? "
-                                        "Closing without saving loses every one of them.", unsavedList().c_str());
+                                        "Closing without saving loses every one of them.", work_.unsavedList().c_str());
         else ImGui::TextWrapped("Save the modified profile to the backups before continuing?");
         dialog::error(dialogError_);
         // Save first acts on the profile on screen; it says which one, since more than one can be waiting.
-        const std::string saveLabel = selectedProfile_ ? "Save Profile " + std::to_string(*selectedProfile_ + 1) : "Save first";
+        const std::string saveLabel = work_.selected ? "Save Profile " + std::to_string(*work_.selected + 1) : "Save first";
         const int hit = dialog::footer({{"Cancel"}, {closing ? "Close without saving" : "Discard and continue"}, {saveLabel.c_str(), true}});
         if (hit == 0) cancelDialog();
         else if (hit == 1) {
@@ -948,7 +852,7 @@ void MainWindow::drawDialog()
     else if (dialog_ == Dialog::CleanBackups) drawCleanBackups();
     else if (dialog_ == Dialog::Apply) {
         dialog::title("Apply to keyboard");
-        const auto edited = editedProfiles();
+        const auto edited = work_.editedProfiles();
         bool anyPicked = false;
         if (edited.empty()) dialog::hint("No profile has changes to write.");
         else {
@@ -978,8 +882,8 @@ void MainWindow::drawDialog()
     } else if (dialog_ == Dialog::Defaults) {
         dialog::title("Load default keymap");
         const Keymap defaults(KeyboardLayout::usWindowsFactoryProfile());
-        if (loaded_) {
-            const auto changes = hhkbs::keymap::diffProfiles(keymap_.layers(), defaults.layers()).size();
+        if (work_.loaded) {
+            const auto changes = hhkbs::keymap::diffProfiles(work_.keymap.layers(), defaults.layers()).size();
             ImGui::TextWrapped("Replace the keys of the profile on screen with the built-in US default keymap? "
                                "%zu key%s change, and your edits to this profile are lost. "
                                "The keyboard is not changed; it is written only when you apply it.", changes, changes == 1 ? "" : "s");
@@ -990,18 +894,18 @@ void MainWindow::drawDialog()
         if (hit == 0) dialog_ = Dialog::Backups;
         else if (hit == 1) {
             // With nothing on screen yet the defaults become the profile on screen, like a file or a backup would.
-            if (loaded_) {
+            if (work_.loaded) {
                 // The keys change but what they are compared with does not, so the marks show what differs from the keyboard.
                 for (std::size_t layer=0; layer<Keymap::layerCount; ++layer)
                     for (std::size_t slot=0; slot<Keymap::keysPerLayer; ++slot)
-                        keymap_.setScanCode(layer, slot, defaults.scanCode(layer,slot));
-                savedBytes_ = keymap_.toBytes();  // the built-in keymap is not something that can be lost
+                        work_.keymap.setScanCode(layer, slot, defaults.scanCode(layer,slot));
+                work_.savedBytes = work_.keymap.toBytes();  // the built-in keymap is not something that can be lost
             } else {
-                keymap_ = defaults;
-                loaded_ = true;
-                useKeyboardAsReference();
-                savedBytes_ = keymap_.toBytes();
-                summary_ = "Default keymap";
+                work_.keymap = defaults;
+                work_.loaded = true;
+                work_.useKeyboardAsReference();
+                work_.savedBytes = work_.keymap.toBytes();
+                work_.summary = "Default keymap";
                 status_ = "Loaded default keymap";
                 message_.clear();
             }
@@ -1094,7 +998,7 @@ void MainWindow::draw()
     ImGui::Spacing();
     ImGui::Separator();
     ImGui::Spacing();
-    ImGui::BeginDisabled(!loaded_ || busy);
+    ImGui::BeginDisabled(!work_.loaded || busy);
     ImGui::AlignTextToFramePadding();
     ImGui::TextUnformatted("Layer");
     const char* layers[] = {"Base", "Fn1", "Fn2", "Fn3"};
@@ -1118,14 +1022,14 @@ void MainWindow::draw()
     ImGui::BeginDisabled(demo_ || busy);
     ImGui::AlignTextToFramePadding();
     ImGui::TextUnformatted("Keyboard profile");
-    const auto editedProfiles = this->editedProfiles();
+    const auto editedProfiles = work_.editedProfiles();
     for (std::uint16_t i=0; i<4; ++i) {
         ImGui::SameLine();
-        const bool selected = selectedProfile_ && *selectedProfile_ == i;
+        const bool selected = work_.selected && *work_.selected == i;
         if (selected) ImGui::PushStyleColor(ImGuiCol_Button, theme::palette().selected);
         const auto label = "Profile " + std::to_string(i+1);
         // Over Bluetooth only the profile the keyboard is on can be read; one already read can still be shown.
-        const bool usbOnly = bluetooth_ && !selected && !stashed_[i];
+        const bool usbOnly = bluetooth_ && !selected && !work_.stashed[i];
         ImGui::BeginDisabled(usbOnly);
         if (ImGui::Button(label.c_str(), ImVec2(96,32))) selectProfile(i);
         ImGui::EndDisabled();
@@ -1142,7 +1046,7 @@ void MainWindow::draw()
     drawRefreshIcon(ImGui::GetWindowDrawList(), ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), ImGui::GetColorU32(ImGuiCol_Text));
     ImGui::SetItemTooltip("Read the profile the keyboard is currently using");
     ImGui::EndDisabled();
-    const std::string caption = summary_ + (unsaved() ? (summary_.empty() ? "Unsaved changes" : "  /  Unsaved changes") : "");
+    const std::string caption = work_.summary + (work_.unsaved() ? (work_.summary.empty() ? "Unsaved changes" : "  /  Unsaved changes") : "");
     const auto& style = ImGui::GetStyle();
     // Reserve exactly what is drawn under the keyboard: the button row. Messages live inside the keyboard frame.
     const float below = style.ItemSpacing.y + ImGui::GetFrameHeight();
@@ -1153,14 +1057,14 @@ void MainWindow::draw()
         if (state != hhkbs::device::PadMonitor::State::Unknown) padStates[pad] = state == hhkbs::device::PadMonitor::State::On;
     }
     ImGui::BeginDisabled(busy);
-    if (loaded_) {
+    if (work_.loaded) {
         std::optional<std::size_t> padToggled;
-        const auto slot = drawKeyboard(keymap_, layer_, boardHeight, padStates, padToggled, caption,
+        const auto slot = drawKeyboard(work_.keymap, layer_, boardHeight, padStates, padToggled, caption,
                                        message_.empty() && demo_ ? "Demo mode: nothing is written." : message_, message_.empty());
         if (padToggled) beginPadChange(*padToggled, !padStates[*padToggled].value_or(true));
         if (slot) {
             slot_ = *slot;
-            assignment_.reset(keymap_.scanCode(layer_,slot_), keyName(slot_) + " (" + layerNames[layer_] + ")");
+            assignment_.reset(work_.keymap.scanCode(layer_,slot_), keyName(slot_) + " (" + layerNames[layer_] + ")");
             dialog_ = Dialog::Assign;
         }
     } else {
@@ -1170,17 +1074,17 @@ void MainWindow::draw()
         ImGui::EndChild();
     }
     // Left: what is done with the profile on screen. Right, alone: the one action that writes to the keyboard.
-    ImGui::BeginDisabled(!loaded_);
+    ImGui::BeginDisabled(!work_.loaded);
     if (ImGui::Button("Save")) openSave();
     ImGui::SetItemTooltip("Save the profile on screen, with your edits, to the backups");
     ImGui::EndDisabled();
     ImGui::SameLine();
     if (ImGui::Button("Backups")) openBackups();
     ImGui::SameLine();
-    ImGui::BeginDisabled(!loaded_ || !keymap_.isModified());
+    ImGui::BeginDisabled(!work_.loaded || !work_.keymap.isModified());
     if (ImGui::Button("Discard changes")) {
-        keymap_.reset();
-        savedBytes_ = keymap_.toBytes();  // it is the keyboard's content again, so there is nothing left to lose
+        work_.keymap.reset();
+        work_.savedBytes = work_.keymap.toBytes();  // it is the keyboard's content again, so there is nothing left to lose
     }
     ImGui::SetItemTooltip("Put the profile on screen back to what the keyboard holds");
     ImGui::EndDisabled();
@@ -1195,11 +1099,11 @@ void MainWindow::draw()
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, theme::palette().accentActive);
     ImGui::PushStyleColor(ImGuiCol_Text, theme::palette().accentText);
     const bool nothingToApply = editedProfiles.empty();
-    ImGui::BeginDisabled(!loaded_ || demo_ || busy || bluetooth_ || nothingToApply);
+    ImGui::BeginDisabled(!work_.loaded || demo_ || busy || bluetooth_ || nothingToApply);
     if (ImGui::Button("Apply to keyboard")) openApply();
     ImGui::EndDisabled();
     if (bluetooth_) ImGui::SetItemTooltip("Applying needs a USB connection");
-    else if (nothingToApply && loaded_ && !demo_) ImGui::SetItemTooltip("No profile has changes to write");
+    else if (nothingToApply && work_.loaded && !demo_) ImGui::SetItemTooltip("No profile has changes to write");
     ImGui::PopStyleColor(4);
     drawDialog();
     ImGui::End();
