@@ -36,6 +36,12 @@ target_include_directories(hhkbs_imgui SYSTEM PUBLIC
 target_link_libraries(hhkbs_imgui PUBLIC glfw OpenGL::GL)
 
 add_library(hhkbs_core STATIC
+    src/app/BackupList.cpp
+    src/app/BackupList.h
+    src/app/KeyboardTasks.cpp
+    src/app/KeyboardTasks.h
+    src/app/ProfileWorkspace.cpp
+    src/app/ProfileWorkspace.h
     src/device/DeviceDiscovery.cpp
     src/device/DeviceDiscovery.h
     src/device/DeviceError.h
@@ -138,12 +144,18 @@ if(BUILD_TESTING)
 
     add_executable(hhkbs_profile_files_tests tests/ProfileFilesTests.cpp)
     target_link_libraries(hhkbs_profile_files_tests PRIVATE hhkbs_core)
+    add_executable(hhkbs_backup_list_tests tests/BackupListTests.cpp)
+    target_link_libraries(hhkbs_backup_list_tests PRIVATE hhkbs_core)
+    add_executable(hhkbs_profile_workspace_tests tests/ProfileWorkspaceTests.cpp)
+    target_link_libraries(hhkbs_profile_workspace_tests PRIVATE hhkbs_core)
     find_program(XVFB_RUN xvfb-run)
     if(XVFB_RUN)
         add_test(NAME gui_startup COMMAND "${XVFB_RUN}" -a $<TARGET_FILE:hhkbs> --smoke-test)
         set_tests_properties(gui_startup PROPERTIES TIMEOUT 20)
     endif()
     add_test(NAME profile_files COMMAND hhkbs_profile_files_tests)
+    add_test(NAME backup_list COMMAND hhkbs_backup_list_tests)
+    add_test(NAME profile_workspace COMMAND hhkbs_profile_workspace_tests)
 
     add_test(NAME keymap_model COMMAND hhkbs_keymap_tests)
     add_test(NAME hhkb_device_protocol COMMAND hhkbs_device_tests)

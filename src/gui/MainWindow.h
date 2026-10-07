@@ -1,4 +1,7 @@
 #pragma once
+#include "app/BackupList.h"
+#include "app/KeyboardTasks.h"
+#include "app/ProfileWorkspace.h"
 #include "device/PadMonitor.h"
 #include "gui/KeyAssignmentDialog.h"
 #include "keymap/BackupFiles.h"
@@ -24,45 +27,16 @@ private:
     enum class Action { None, Read, LoadFile, LoadBackup, Close };
     enum class Dialog { None, Assign, Unsaved, Save, Defaults, Apply, Backups, CleanBackups };
     enum class BackupTab { Import, Restore, Manage };
-    struct ScanResult {
-        std::string status;
-        std::string detail;
-        std::vector<std::uint8_t> bytes;
-        std::optional<std::uint16_t> profile;
-        std::filesystem::path path;  // the configuration interface that answered
-        bool bluetooth = false;      // that interface is a Bluetooth connection
-        std::array<std::optional<bool>, 4> pads;  // gesture pad states read from the keyboard
-        std::string serial;          // the serial number of the keyboard that was read
-    };
-    struct PadResult {
-        bool ok = false;
-        std::size_t pad = 0;
-        bool on = true;
-        std::string message;
-    };
-    struct ApplyResult {
-        bool ok = false;
-        std::string message;
-        std::vector<std::uint16_t> written;               // the profiles that were written, in order
-        std::array<std::vector<std::uint8_t>, 4> bytes;   // what each of them holds now
-    };
-    struct ProfileRead {
-        std::uint16_t profile = 0;
-        std::vector<std::uint8_t> bytes;
-        std::string error;  // empty when the profile was read
-    };
-    struct PreviewResult { std::vector<ProfileRead> profiles; };
+    using ScanResult = hhkbs::app::ScanResult;
+    using PadResult = hhkbs::app::PadResult;
+    using ApplyResult = hhkbs::app::ApplyResult;
+    using ProfileRead = hhkbs::app::ProfileRead;
+    using PreviewResult = hhkbs::app::PreviewResult;
     // What the Apply dialog knows about one profile: the keys that differ from what the keyboard holds.
     struct Preview {
         bool read = false;
         std::string error;
         std::vector<hhkbs::keymap::KeyChange> changes;
-    };
-    // The work on a profile that is not the one shown; it comes back when that profile is chosen again.
-    struct Stash {
-        hhkbs::keymap::Keymap keymap;
-        std::vector<std::uint8_t> savedBytes;
-        std::string summary;
     };
     void beginScan(std::optional<std::uint16_t> profile = std::nullopt, bool reconnect = false);
     void selectProfile(std::uint16_t profile);
@@ -75,14 +49,6 @@ private:
     void beginPreview();
     void pollPreview();
     void drawChanges();
-    void stashShown();
-    void showStashed(std::uint16_t profile);
-    void useKeyboardAsReference();
-    [[nodiscard]] const hhkbs::keymap::Keymap* draft(std::uint16_t profile) const;
-    [[nodiscard]] std::vector<std::uint16_t> editedProfiles() const;
-    [[nodiscard]] bool anyUnsaved() const;
-    [[nodiscard]] std::string unsavedList() const;
-    void showFirstUnsaved();
     [[nodiscard]] bool busy() const { return scan_.valid() || apply_.valid() || pad_.valid() || preview_.valid(); }
     void request(Action action);
     void perform(Action action);
@@ -106,18 +72,11 @@ private:
     void drawImportTab(float belowList);
     void finishDialog();
     void cancelDialog();
-    [[nodiscard]] bool unsaved() const;
 
-    hhkbs::keymap::Keymap keymap_;
-    std::vector<std::uint8_t> savedBytes_;
-    std::vector<hhkbs::keymap::BackupEntry> backups_;
-    std::optional<std::size_t> backupChoice_;
-    std::array<char, 256> tagInput_{};  // the tag being edited for the chosen backup
-    std::optional<std::size_t> tagShownFor_;  // the backup tagInput_ was filled from
+    hhkbs::app::BackupList backupList_{hhkbs::keymap::backupDirectory()};  // the Backups window's list and tag box
     std::optional<hhkbs::keymap::BackupEntry> pendingBackup_;
     std::optional<BackupTab> selectTab_;  // the Backups tab to come up on
     bool confirmDelete_ = false;  // the delete confirmation is open over the Backups window
-    int keepBackups_ = 5;
     std::future<ScanResult> scan_;
     std::future<ApplyResult> apply_;
     std::future<PadResult> pad_;
@@ -127,19 +86,11 @@ private:
     std::array<Preview, 4> previews_;
     std::array<bool, 4> applyPick_{};   // the profiles the Apply will write
     std::uint16_t applyView_ = 0;       // the profile whose changes the dialog lists
-    std::array<std::optional<Stash>, 4> stashed_;
-    // What the keyboard held for each profile when it was last read or written; empty when it has not been read.
-    std::array<std::vector<std::uint8_t>, 4> keyboardBytes_;
-    // The keyboard those bytes came from. Applying and the other writes only go to the keyboard with this serial number.
-    std::string keyboardSerial_;
-    // The keyboard profile shown in the editor; only set once it has been read or applied.
-    std::optional<std::uint16_t> selectedProfile_;
+    hhkbs::app::ProfileWorkspace work_;  // the profile on screen and the work kept for the others
     bool demo_ = false;
     std::string status_ = "No device";
-    std::string summary_;
     std::string message_;
     std::string dialogError_;
-    bool loaded_ = false;
     bool close_ = false;
     hhkbs::device::PadMonitor pads_;  // gesture pad on/off as the keyboard reports it
     bool wasListening_ = false;       // the monitor was running, so it stopping means the keyboard went away

@@ -27,6 +27,7 @@ public:
     explicit HhkbStudioDevice(Transport& transport);
 
     [[nodiscard]] std::string readProductName();
+    [[nodiscard]] std::string readSerialNumber();
     [[nodiscard]] KeyboardInformation readInformation();
     [[nodiscard]] std::vector<std::uint8_t> readCurrentProfile();
 
