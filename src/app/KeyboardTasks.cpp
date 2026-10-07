@@ -43,6 +43,7 @@ ScanResult scanKeyboard(const std::optional<std::uint16_t> target, const bool re
     try {
         const auto devices = hhkbs::device::DeviceDiscovery::findHhkbStudioInterfaces();
         bool permission = false;
+        bool otherKeyboard = false;  // a keyboard answered, but not the one that was read
         std::string lastError;
         for (const auto& item : devices) {
             if (!item.canReadWrite) { permission = true; continue; }
@@ -61,7 +62,7 @@ ScanResult scanKeyboard(const std::optional<std::uint16_t> target, const bool re
                     return result;
                 }
                 const auto info = device.readInformation();
-                if (!serial.empty() && info.serialNumber != serial) { lastError = "The keyboard that was read is not connected."; continue; }
+                if (!serial.empty() && info.serialNumber != serial) { otherKeyboard = true; continue; }
                 const auto profile = target.value_or(info.currentProfile);
                 result.bytes = device.readProfile(profile);
                 result.profile = profile;
@@ -84,7 +85,9 @@ ScanResult scanKeyboard(const std::optional<std::uint16_t> target, const bool re
             result.detail = "Install packaging/60-hhkbs.rules as described in the README, then reconnect the keyboard.";
         } else if (!devices.empty()) {
             result.status = "Connection failed";
-            result.detail = lastError.empty() ? "No configuration interface responded." : lastError;
+            // Other interfaces of the same keyboard time out after this one answered; that must not hide the cause.
+            if (otherKeyboard) result.detail = "The keyboard that was read is not connected. Read from the keyboard again.";
+            else result.detail = lastError.empty() ? "No configuration interface responded." : lastError;
         }
     } catch (const std::exception& error) {
         result.status = "Connection failed";
