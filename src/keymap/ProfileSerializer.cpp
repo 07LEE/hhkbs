@@ -50,6 +50,51 @@ Keymap::ScanCode parseScanCode(std::string_view token)
     return static_cast<Keymap::ScanCode>(value);
 }
 
+// The document with comments removed and the text of strings emptied, so what is left to search is only structure:
+// a "]" or "[[layers]]" inside a comment or a string is no longer there to be mistaken for syntax.
+std::string withoutCommentsAndStrings(const std::string_view document)
+{
+    std::string structure;
+    structure.reserve(document.size());
+    std::size_t i = 0;
+    while (i < document.size()) {
+        const char c = document[i];
+        if (c == '#') {
+            while (i < document.size() && document[i] != '\n') ++i;
+        } else if (c == '"' || c == '\'') {
+            const auto quote = document.substr(i, 3) == std::string(3, c) ? std::string(3, c) : std::string(1, c);
+            structure += c;
+            i += quote.size();
+            while (i < document.size()) {
+                if (document.substr(i, quote.size()) == quote) { i += quote.size(); break; }
+                // A basic string can escape a quote; a literal one cannot. Only a multi-line string spans lines.
+                if (c == '"' && document[i] == '\\') ++i;
+                else if (quote.size() == 1 && document[i] == '\n') break;
+                ++i;
+            }
+            structure += c;
+        } else {
+            structure += c;
+            ++i;
+        }
+    }
+    return structure;
+}
+
+// Where the next [[layers]] table header starts: it has to be the first thing on its line.
+std::size_t findLayerHeader(const std::string_view structure, std::size_t from)
+{
+    constexpr std::string_view layerHeader = "[[layers]]";
+    while ((from = structure.find(layerHeader, from)) != std::string_view::npos) {
+        const auto lineStart = structure.rfind('\n', from);
+        const auto before = structure.substr(lineStart == std::string_view::npos ? 0 : lineStart + 1,
+                                             from - (lineStart == std::string_view::npos ? 0 : lineStart + 1));
+        if (trim(before).empty()) return from;
+        from += layerHeader.size();
+    }
+    return std::string_view::npos;
+}
+
 }  // namespace
 
 std::string ProfileSerializer::toToml(const Keymap& keymap)
@@ -74,23 +119,25 @@ std::string ProfileSerializer::toToml(const Keymap& keymap)
     return document;
 }
 
-Keymap ProfileSerializer::fromToml(const std::string_view document)
+Keymap ProfileSerializer::fromToml(const std::string_view source)
 {
     constexpr std::string_view layerHeader = "[[layers]]";
+    const auto structure = withoutCommentsAndStrings(source);
+    const std::string_view document = structure;
     std::vector<std::uint8_t> bytes;
     bytes.reserve(Keymap::profileByteCount);
 
     std::size_t searchOffset = 0;
     std::size_t layerCount = 0;
     while (true) {
-        const auto layerStart = document.find(layerHeader, searchOffset);
+        const auto layerStart = findLayerHeader(document, searchOffset);
         if (layerStart == std::string_view::npos) {
             break;
         }
         ++layerCount;
 
         const auto nextLayer =
-            document.find(layerHeader, layerStart + layerHeader.size());
+            findLayerHeader(document, layerStart + layerHeader.size());
         const auto layerEnd =
             nextLayer == std::string_view::npos ? document.size() : nextLayer;
         const auto assignment = document.find("scancodes", layerStart);

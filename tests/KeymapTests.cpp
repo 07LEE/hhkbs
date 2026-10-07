@@ -184,6 +184,25 @@ void tomlProfilesRoundTrip()
         "gesture pad window-switch label is incorrect");
 }
 
+void tomlCommentsAndStringsAreNotSyntax()
+{
+    Keymap original(hhkbs::keymap::KeyboardLayout::demoProfile());
+    original.setScanCode(1, 7, 0x0123);
+    auto document = hhkbs::keymap::ProfileSerializer::toToml(original);
+
+    const auto replaceFirst = [&](const std::string& from, const std::string& to) {
+        const auto at = document.find(from);
+        require(at != std::string::npos, "test document is missing the text to replace");
+        document.replace(at, from.size(), to);
+    };
+    replaceFirst("[[layers]]", "[[layers]] # the first ] layer\n");
+    replaceFirst("scancodes = [\n", "scancodes = [ # note ] [[layers]]\n  # 0x7777, ]\n");
+    document = "# [[layers]] old configuration\ntitle = \"a ] [[layers]] \\\" b\"\nnote = 'scancodes = ['\n" + document;
+
+    const auto parsed = hhkbs::keymap::ProfileSerializer::fromToml(document);
+    require(parsed.toBytes() == original.toBytes(), "a comment or string was read as TOML syntax");
+}
+
 void malformedTomlIsRejected()
 {
     requireThrows<std::invalid_argument>(
@@ -246,6 +265,7 @@ int main()
         gesturePadLayoutHasAllDirections();
         factoryProfileContainsAllDefaultLayers();
         tomlProfilesRoundTrip();
+        tomlCommentsAndStringsAreNotSyntax();
         malformedTomlIsRejected();
         diffListsOnlyTheChangedKeys();
         rebaseMovesTheReferenceNotTheKeys();
