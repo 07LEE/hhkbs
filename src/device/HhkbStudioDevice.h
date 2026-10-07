@@ -51,8 +51,9 @@ public:
     // Switches a gesture pad on or off, then reads the state back to confirm it took effect.
     void setPadState(std::size_t pad, bool on);
 
-    // Throws unless this is an HHKB Studio whose current profile is expectedProfile.
-    void requireTarget(std::uint16_t expectedProfile);
+    // Throws unless this is the HHKB Studio with serial number expectedSerial (which must not be empty) and its
+    // current profile is expectedProfile.
+    void requireTarget(std::uint16_t expectedProfile, const std::string& expectedSerial);
 
     // Writes the current profile, reads it back and compares. If the write fails
     // or the read-back differs, `backup` is written back on a best-effort basis

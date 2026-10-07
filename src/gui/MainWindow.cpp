@@ -42,18 +42,23 @@ std::string keyName(std::size_t slot)
 }
 
 // With usbOnly, a Bluetooth connection is passed over: writing a profile is only done over the cable.
-std::unique_ptr<hhkbs::device::HidrawTransport> openStudio(const bool usbOnly = false)
+// With a serial number, only the keyboard that carries it is opened, so a second HHKB Studio is never mistaken for it.
+std::unique_ptr<hhkbs::device::HidrawTransport> openStudio(const bool usbOnly = false, const std::string& serial = {})
 {
     bool skippedBluetooth = false;
+    bool otherKeyboard = false;
     for (const auto& item : hhkbs::device::DeviceDiscovery::findHhkbStudioInterfaces()) {
         if (!item.canReadWrite) continue;
         if (usbOnly && item.bluetooth) { skippedBluetooth = true; continue; }
         try {
             auto transport = std::make_unique<hhkbs::device::HidrawTransport>(item.path);
-            if (hhkbs::device::HhkbStudioDevice(*transport).readProductName() == "HHKB-Studio")
-                return transport;
+            hhkbs::device::HhkbStudioDevice device(*transport);
+            if (device.readProductName() != "HHKB-Studio") continue;
+            if (serial.empty() || device.readInformation().serialNumber == serial) return transport;
+            otherKeyboard = true;
         } catch (const std::exception&) {}
     }
+    if (otherKeyboard) throw std::runtime_error("The keyboard that was read is not connected. Read from the keyboard again.");
     if (skippedBluetooth) throw std::runtime_error("Applying needs a USB connection. Connect the keyboard with a cable.");
     throw std::runtime_error("No writable HHKB Studio was found. Check the connection and udev rules.");
 }
@@ -183,8 +188,9 @@ void MainWindow::beginScan(std::optional<std::uint16_t> target, const bool recon
         status_ = "Searching...";
         message_ = "Checking available HID interfaces...";
     }
-    scan_ = std::async(std::launch::async, [target, reconnect] {
-        ScanResult result{"No device", "Connect an HHKB Studio, import a TOML profile, or start with --demo.", {}, std::nullopt, {}, false, {}};
+    // A profile chosen on the keyboard that is on screen is read from that keyboard, not from whichever answers first.
+    scan_ = std::async(std::launch::async, [target, reconnect, serial = target ? keyboardSerial_ : std::string()] {
+        ScanResult result{"No device", "Connect an HHKB Studio, import a TOML profile, or start with --demo.", {}, std::nullopt, {}, false, {}, {}};
         try {
             const auto devices = hhkbs::device::DeviceDiscovery::findHhkbStudioInterfaces();
             bool permission = false;
@@ -206,9 +212,11 @@ void MainWindow::beginScan(std::optional<std::uint16_t> target, const bool recon
                         return result;
                     }
                     const auto info = device.readInformation();
+                    if (!serial.empty() && info.serialNumber != serial) { lastError = "The keyboard that was read is not connected."; continue; }
                     const auto profile = target.value_or(info.currentProfile);
                     result.bytes = device.readProfile(profile);
                     result.profile = profile;
+                    result.serial = info.serialNumber;
                     result.path = item.path;
                     result.bluetooth = item.bluetooth;
                     for (std::size_t pad = 0; pad < result.pads.size(); ++pad) {
@@ -263,6 +271,7 @@ void MainWindow::pollScan()
         message_ = result.detail;
         if (!result.bytes.empty()) {
             const auto profile = result.profile.value_or(0);
+            keyboardSerial_ = result.serial;
             keyboardBytes_[profile] = result.bytes;
             Keymap fresh(result.bytes);
             if (selectedProfile_ != profile) {
@@ -294,10 +303,10 @@ void MainWindow::beginPadChange(const std::size_t pad, const bool on)
     if (busy() || demo_) return;
     status_ = "Switching pad...";
     message_.clear();
-    pad_ = std::async(std::launch::async, [pad, on] {
+    pad_ = std::async(std::launch::async, [pad, on, serial = keyboardSerial_] {
         PadResult result{false, pad, on, {}};
         try {
-            auto transport = openStudio();
+            auto transport = openStudio(false, serial);
             hhkbs::device::HhkbStudioDevice(*transport).setPadState(pad, on);
             result.ok = true;
         } catch (const std::exception& error) { result.message = error.what(); }
@@ -355,7 +364,7 @@ void MainWindow::beginApply()
     if (jobs.empty()) return;
     status_ = "Applying...";
     message_ = "Writing to the keyboard. Do not unplug it.";
-    apply_ = std::async(std::launch::async, [jobs = std::move(jobs)] {
+    apply_ = std::async(std::launch::async, [jobs = std::move(jobs), serial = keyboardSerial_] {
         ApplyResult result;
         const auto listed = [](const std::vector<std::uint16_t>& profiles) {
             std::string text = profiles.size() == 1 ? "profile " : "profiles ";
@@ -364,13 +373,13 @@ void MainWindow::beginApply()
         };
         std::string backups;
         try {
-            auto transport = openStudio(true);
+            auto transport = openStudio(true, serial);
             hhkbs::device::HhkbStudioDevice device(*transport);
             for (const auto& [profile, bytes] : jobs) {
                 std::filesystem::path path;
                 try {
                     device.runOnProfile(profile, [&] {
-                        device.requireTarget(profile);
+                        device.requireTarget(profile, serial);
                         const auto backup = device.readCurrentProfile();
 
                         // Keep a copy of what the keyboard held; without it a failed write cannot be undone by hand.
@@ -426,11 +435,11 @@ void MainWindow::beginPreview()
     if (busy() || demo_ || bluetooth_) return;
     const auto profiles = editedProfiles();
     if (profiles.empty()) { previewDone_ = true; return; }
-    preview_ = std::async(std::launch::async, [profiles] {
+    preview_ = std::async(std::launch::async, [profiles, serial = keyboardSerial_] {
         PreviewResult result;
         std::unique_ptr<hhkbs::device::HidrawTransport> transport;
         std::string failure;
-        try { transport = openStudio(true); } catch (const std::exception& error) { failure = error.what(); }
+        try { transport = openStudio(true, serial); } catch (const std::exception& error) { failure = error.what(); }
         for (const auto profile : profiles) {
             ProfileRead read{profile, {}, failure};
             if (failure.empty()) {

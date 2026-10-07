@@ -32,6 +32,7 @@ private:
         std::filesystem::path path;  // the configuration interface that answered
         bool bluetooth = false;      // that interface is a Bluetooth connection
         std::array<std::optional<bool>, 4> pads;  // gesture pad states read from the keyboard
+        std::string serial;          // the serial number of the keyboard that was read
     };
     struct PadResult {
         bool ok = false;
@@ -129,6 +130,8 @@ private:
     std::array<std::optional<Stash>, 4> stashed_;
     // What the keyboard held for each profile when it was last read or written; empty when it has not been read.
     std::array<std::vector<std::uint8_t>, 4> keyboardBytes_;
+    // The keyboard those bytes came from. Applying and the other writes only go to the keyboard with this serial number.
+    std::string keyboardSerial_;
     // The keyboard profile shown in the editor; only set once it has been read or applied.
     std::optional<std::uint16_t> selectedProfile_;
     bool demo_ = false;
