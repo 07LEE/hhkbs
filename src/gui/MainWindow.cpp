@@ -377,6 +377,12 @@ void MainWindow::beginApply()
             hhkbs::device::HhkbStudioDevice device(*transport);
             for (const auto& [profile, bytes] : jobs) {
                 std::filesystem::path path;
+                bool written = false;
+                const auto record = [&] {
+                    result.written.push_back(profile);
+                    result.bytes[profile] = bytes;
+                    backups += (backups.empty() ? "" : ", ") + path.filename().string();
+                };
                 try {
                     device.runOnProfile(profile, [&] {
                         device.requireTarget(profile, serial);
@@ -389,13 +395,15 @@ void MainWindow::beginApply()
                         hhkbs::keymap::writeProfile(path, hhkbs::keymap::Keymap(backup), false);
 
                         device.writeCurrentProfile(bytes, backup);
+                        written = true;
                     });
                 } catch (const std::exception& error) {
-                    throw std::runtime_error("Profile " + std::to_string(profile + 1) + " was not written: " + error.what());
+                    // The write can succeed and the keyboard still fail to return to its profile afterwards.
+                    if (!written) throw std::runtime_error("Profile " + std::to_string(profile + 1) + " was not written: " + error.what());
+                    record();
+                    throw std::runtime_error("Profile " + std::to_string(profile + 1) + " was written, but " + error.what());
                 }
-                result.written.push_back(profile);
-                result.bytes[profile] = bytes;
-                backups += (backups.empty() ? "" : ", ") + path.filename().string();
+                record();
             }
             result.ok = true;
             result.message = "Applied to " + listed(result.written) + ". The previous content was saved as " + backups + ".";

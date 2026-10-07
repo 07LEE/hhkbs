@@ -437,6 +437,30 @@ void unreturnableProfileIsReported()
     require(threw, "a keyboard left on another profile was not reported");
 }
 
+void writeSurvivesFailedReturnToProfile()
+{
+    StorageTransport transport;
+    transport.ignoreSwitchNumber = 2;
+    HhkbStudioDevice device(transport);
+    const auto profile = patternProfile(9);
+
+    bool written = false;
+    bool threw = false;
+    try {
+        device.runOnProfile(1, [&] {
+            device.writeCurrentProfile(profile, device.readCurrentProfile());
+            written = true;
+        });
+    } catch (const hhkbs::device::DeviceError&) {
+        threw = true;
+    }
+
+    // The error does not mean the write failed; callers have to track that themselves.
+    require(threw, "a keyboard left on another profile was not reported");
+    require(written, "the write did not finish before the return failed");
+    require(transport.memory == profile, "the written profile was lost");
+}
+
 void profileSwitchPacketIsEncoded()
 {
     const auto request = hhkbs::device::protocol::encodeProfileSwitchRequest(2);
@@ -765,6 +789,7 @@ int main()
         failedWriteRestoresBackup();
         mismatchedReadBackRestoresBackup();
         writeTargetIsChecked();
+        writeSurvivesFailedReturnToProfile();
         profileSwitchPacketIsEncoded();
         profileSwitchIsConfirmed();
         invalidProfileSwitchIsRejectedBeforeSending();
