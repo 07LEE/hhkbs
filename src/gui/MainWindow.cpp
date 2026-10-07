@@ -19,7 +19,6 @@
 #include <unistd.h>
 #include <spawn.h>
 #include <sys/wait.h>
-#include <stdexcept>
 #include <utility>
 
 using hhkbs::keymap::Keymap;
