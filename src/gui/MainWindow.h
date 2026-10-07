@@ -1,4 +1,5 @@
 #pragma once
+#include "app/KeyboardTasks.h"
 #include "device/PadMonitor.h"
 #include "gui/KeyAssignmentDialog.h"
 #include "keymap/BackupFiles.h"
@@ -24,34 +25,11 @@ private:
     enum class Action { None, Read, LoadFile, LoadBackup, Close };
     enum class Dialog { None, Assign, Unsaved, Save, Defaults, Apply, Backups, CleanBackups };
     enum class BackupTab { Import, Restore, Manage };
-    struct ScanResult {
-        std::string status;
-        std::string detail;
-        std::vector<std::uint8_t> bytes;
-        std::optional<std::uint16_t> profile;
-        std::filesystem::path path;  // the configuration interface that answered
-        bool bluetooth = false;      // that interface is a Bluetooth connection
-        std::array<std::optional<bool>, 4> pads;  // gesture pad states read from the keyboard
-        std::string serial;          // the serial number of the keyboard that was read
-    };
-    struct PadResult {
-        bool ok = false;
-        std::size_t pad = 0;
-        bool on = true;
-        std::string message;
-    };
-    struct ApplyResult {
-        bool ok = false;
-        std::string message;
-        std::vector<std::uint16_t> written;               // the profiles that were written, in order
-        std::array<std::vector<std::uint8_t>, 4> bytes;   // what each of them holds now
-    };
-    struct ProfileRead {
-        std::uint16_t profile = 0;
-        std::vector<std::uint8_t> bytes;
-        std::string error;  // empty when the profile was read
-    };
-    struct PreviewResult { std::vector<ProfileRead> profiles; };
+    using ScanResult = hhkbs::app::ScanResult;
+    using PadResult = hhkbs::app::PadResult;
+    using ApplyResult = hhkbs::app::ApplyResult;
+    using ProfileRead = hhkbs::app::ProfileRead;
+    using PreviewResult = hhkbs::app::PreviewResult;
     // What the Apply dialog knows about one profile: the keys that differ from what the keyboard holds.
     struct Preview {
         bool read = false;

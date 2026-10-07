@@ -36,6 +36,8 @@ target_include_directories(hhkbs_imgui SYSTEM PUBLIC
 target_link_libraries(hhkbs_imgui PUBLIC glfw OpenGL::GL)
 
 add_library(hhkbs_core STATIC
+    src/app/KeyboardTasks.cpp
+    src/app/KeyboardTasks.h
     src/device/DeviceDiscovery.cpp
     src/device/DeviceDiscovery.h
     src/device/DeviceError.h
