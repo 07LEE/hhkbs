@@ -110,7 +110,7 @@ ScanResult scanKeyboard(KeyboardAccess& access, const std::optional<std::uint16_
         }
         if (permission) {
             result.status = "Permission required";
-            result.detail = "Install packaging/60-hhkbs.rules as described in the README, then reconnect the keyboard.";
+            result.detail = "Install the 60-hhkbs.rules file as described in the README (it is in the release archive too), then reconnect the keyboard.";
         } else if (!devices.empty()) {
             result.status = "Connection failed";
             // Other interfaces of the same keyboard time out after this one answered; that must not hide the cause.
