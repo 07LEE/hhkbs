@@ -19,7 +19,11 @@ class MainWindow final {
 public:
     explicit MainWindow(bool demoMode = false);
     void draw();
+    // The window was asked to close (the X button, or a signal). It closes once nothing is running on the keyboard,
+    // after asking about unsaved work.
     void requestClose();
+    // An exception came out of drawing a frame; its text is shown instead of ending the program.
+    void reportError(const std::string& text);
     // Called with the files dropped on the window; the first .toml one is imported once nothing else is going on.
     void dropFiles(const std::vector<std::filesystem::path>& paths);
     [[nodiscard]] bool shouldClose() const { return close_; }
@@ -60,6 +64,7 @@ private:
     void requestImport(const std::filesystem::path& path);
     [[nodiscard]] bool importFile(const std::filesystem::path& path);
     void pollDrop();
+    void pollClose();
     void openSave();
     void drawSave();
     void saveBackup();
@@ -98,6 +103,7 @@ private:
     std::string message_;
     std::string dialogError_;
     bool close_ = false;
+    bool closeRequested_ = false;     // asked to close while the keyboard was busy; done when it is free
     hhkbs::device::PadMonitor pads_;  // gesture pad on/off as the keyboard reports it
     bool wasListening_ = false;       // the monitor was running, so it stopping means the keyboard went away
     bool bluetooth_ = false;          // the keyboard was read over Bluetooth: applying is left to USB

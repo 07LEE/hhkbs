@@ -84,7 +84,10 @@ MainWindow::MainWindow(bool demoMode)
 void MainWindow::beginScan(std::optional<std::uint16_t> target, const bool reconnect, const bool anyKeyboard,
                            const bool quiet)
 {
-    if (scan_.valid()) return;
+    if (scan_.valid()) {
+        if (!reconnect && !quiet) message_ = "The keyboard is still being checked. Try again in a moment.";
+        return;
+    }
     reconnectScan_ = reconnect;
     if (!reconnect && !quiet) {
         status_ = "Searching...";
@@ -171,8 +174,9 @@ void MainWindow::pollPadChange()
 
 void MainWindow::pollConnection()
 {
-    // Writes reopen the interface and may briefly disturb the listener, so only judge while nothing is running.
-    if (busy()) return;
+    // Writes reopen the interface and may briefly disturb the listener, so only judge while nothing is running. A probe
+    // that is running when a dialog's button is pressed would make that press do nothing, so none starts under a dialog.
+    if (busy() || dialog_ != Dialog::None) return;
     if (disconnected_) {
         const auto now = std::chrono::steady_clock::now();
         if (now < nextProbe_) return;
@@ -200,7 +204,8 @@ void MainWindow::pollConnection()
 
 void MainWindow::beginApply()
 {
-    if (busy() || demo_ || !work_.loaded) return;
+    if (demo_ || !work_.loaded) return;
+    if (busy()) { message_ = "The keyboard is busy. Apply again in a moment."; return; }
     std::vector<std::pair<std::uint16_t, std::vector<std::uint8_t>>> jobs;
     for (std::uint16_t i = 0; i < 4; ++i)
         if (applyPick_[i])
@@ -251,9 +256,25 @@ void MainWindow::pollPreview()
     previewDone_ = true;
 }
 
-void MainWindow::requestClose()
+void MainWindow::requestClose() { closeRequested_ = true; }
+
+void MainWindow::reportError(const std::string& text)
 {
-    if (busy()) { message_ = "Please wait for the keyboard operation to finish before closing."; return; }
+    status_ = "Error";
+    message_ = text;
+}
+
+// A request to close waits for whatever is running on the keyboard, which is never interrupted, and is then asked
+// about unsaved work like any other close. A dialog that is open has the window's attention, so the request is let go.
+void MainWindow::pollClose()
+{
+    if (!closeRequested_) return;
+    if (busy()) {
+        // The warning not to unplug the keyboard stays up while it is being written.
+        if (!apply_.valid()) message_ = "Closing as soon as the keyboard operation is done.";
+        return;
+    }
+    closeRequested_ = false;
     if (dialog_ == Dialog::None) request(Action::Close);
 }
 // Each profile keeps its own work: leaving one for another puts it aside and shows the other's, which is read from
@@ -875,7 +896,7 @@ void MainWindow::drawDialog()
             drawChanges();
         }
         dialog::error(dialogError_);
-        const int hit = dialog::footer({{"Cancel"}, {"Apply", true, false, anyPicked && !preview_.valid()}});
+        const int hit = dialog::footer({{"Cancel"}, {"Apply", true, false, anyPicked && !busy()}});
         if (hit == 0) cancelDialog();
         else if (hit == 1) { finishDialog(); beginApply(); }
     } else if (dialog_ == Dialog::Defaults) {
@@ -960,6 +981,7 @@ void drawThemeIcon(ImDrawList* draw, ImVec2 min, ImVec2 max, theme::Mode mode)
 void MainWindow::draw()
 {
     pollDrop();
+    pollClose();
     pollScan();
     pollApply();
     pollPreview();

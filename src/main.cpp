@@ -4,11 +4,13 @@
 #include <imgui.h>
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
+#include <imgui_internal.h>
 #include <algorithm>
 #include <array>
 #include <string>
 #include <chrono>
 #include <cstdio>
+#include <csignal>
 #include <cstdlib>
 #include <exception>
 #include <filesystem>
@@ -18,6 +20,9 @@
 #include <vector>
 
 namespace {
+volatile std::sig_atomic_t terminateRequested = 0;
+extern "C" void onTerminate(int) { terminateRequested = 1; }
+
 void loadSystemFont(ImFontAtlas& atlas)
 {
     // Ask the host's Fontconfig utility for its configured sans-serif face.
@@ -69,6 +74,13 @@ int main(int argc, char* argv[])
             return 0;
         } else { std::fprintf(stderr,"Unknown option: %s\n", argv[i]); return 1; }
     }
+    // Ctrl-C, a logout or a terminal closing ask the window to close like its X button does, so a write to the keyboard
+    // is finished and unsaved work is asked about. A second signal takes the default action and ends the program.
+    struct sigaction onSignal{};
+    onSignal.sa_handler = onTerminate;
+    sigemptyset(&onSignal.sa_mask);
+    onSignal.sa_flags = SA_RESETHAND;
+    for (const int signal : {SIGINT, SIGTERM, SIGHUP}) ::sigaction(signal, &onSignal, nullptr);
     glfwSetErrorCallback([](int code, const char* message) { std::fprintf(stderr,"GLFW %d: %s\n",code,message); });
     if (!glfwInit()) return 1;
     auto terminate = [](void*) { glfwTerminate(); };
@@ -88,8 +100,14 @@ int main(int argc, char* argv[])
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     loadSystemFont(*io.Fonts);
     theme::mode();
-    if (!ImGui_ImplGlfw_InitForOpenGL(window.get(),true) || !ImGui_ImplOpenGL3_Init("#version 130")) {
+    if (!ImGui_ImplGlfw_InitForOpenGL(window.get(),true)) {
         std::fprintf(stderr,"Could not initialize the GUI backend.\n");
+        ImGui::DestroyContext();
+        return 1;
+    }
+    if (!ImGui_ImplOpenGL3_Init("#version 130")) {
+        std::fprintf(stderr,"Could not initialize the GUI backend.\n");
+        ImGui_ImplGlfw_Shutdown();
         ImGui::DestroyContext();
         return 1;
     }
@@ -102,6 +120,7 @@ int main(int argc, char* argv[])
                 window->dropFiles(std::vector<std::filesystem::path>(paths, paths + count));
         });
         int frames = 0;
+        std::string lastDrawError;
         bool wasFocused = true;
         const auto start = std::chrono::steady_clock::now();
         const char* screenshot = std::getenv("HHKBS_SCREENSHOT");
@@ -113,6 +132,10 @@ int main(int argc, char* argv[])
                 glfwSetWindowShouldClose(window.get(),GLFW_FALSE);
                 app.requestClose();
             }
+            if (terminateRequested) {
+                terminateRequested = 0;
+                app.requestClose();
+            }
             // Follow the desktop's color scheme when the window regains focus.
             const bool focused = glfwGetWindowAttrib(window.get(),GLFW_FOCUSED) == GLFW_TRUE;
             if (focused && !wasFocused) theme::refresh();
@@ -120,7 +143,24 @@ int main(int argc, char* argv[])
             ImGui_ImplOpenGL3_NewFrame();
             ImGui_ImplGlfw_NewFrame();
             ImGui::NewFrame();
-            app.draw();
+            // An exception while drawing must not take the unsaved work of every profile with it: the frame is put
+            // back in order, the reason is shown, and the program carries on.
+            ImGuiErrorRecoveryState frameState;
+            ImGui::ErrorRecoveryStoreState(&frameState);
+            try { app.draw(); }
+            catch (const std::exception& error) {
+                // Recovering is the point, so it should not abort, log or draw a warning about the half-drawn frame.
+                const auto settings = std::array<bool, 3>{io.ConfigErrorRecoveryEnableAssert, io.ConfigErrorRecoveryEnableDebugLog,
+                                                          io.ConfigErrorRecoveryEnableTooltip};
+                io.ConfigErrorRecoveryEnableAssert = io.ConfigErrorRecoveryEnableDebugLog = io.ConfigErrorRecoveryEnableTooltip = false;
+                ImGui::ErrorRecoveryTryToRecoverState(&frameState);
+                io.ConfigErrorRecoveryEnableAssert = settings[0];
+                io.ConfigErrorRecoveryEnableDebugLog = settings[1];
+                io.ConfigErrorRecoveryEnableTooltip = settings[2];
+                app.reportError(error.what());
+                if (lastDrawError != error.what()) std::fprintf(stderr,"HHKBS: %s\n",error.what());
+                lastDrawError = error.what();
+            }
             ImGui::Render();
             int width=0, height=0;
             glfwGetFramebufferSize(window.get(),&width,&height);
