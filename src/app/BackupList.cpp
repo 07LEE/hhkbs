@@ -69,8 +69,7 @@ BackupList::Saved BackupList::save(const keymap::Keymap& work, const std::uint16
     keymap::writeProfile(saved.path, work, false);
     if (!tag.empty()) {
         try {
-            for (const auto& entry : keymap::listBackups(directory_))
-                if (entry.path == saved.path) keymap::setBackupTag(directory_, entry, tag);
+            keymap::setBackupTag(directory_, keymap::BackupEntry{saved.path, profile, {}, {}}, tag);
         } catch (const std::exception& error) { saved.tagError = error.what(); }
     }
     return saved;

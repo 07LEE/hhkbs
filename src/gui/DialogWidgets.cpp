@@ -27,10 +27,23 @@ void hint(const char* text)
     ImGui::PopTextWrapPos();
 }
 
+ImVec4 errorColor() { return ImVec4(.85f, .3f, .3f, 1); }
+
+void pushAccent(const bool danger)
+{
+    const auto& palette = theme::palette();
+    ImGui::PushStyleColor(ImGuiCol_Button, danger ? ImVec4(.78f, .22f, .22f, 1) : palette.accent);
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, danger ? ImVec4(.85f, .28f, .28f, 1) : palette.accentHovered);
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, danger ? ImVec4(.68f, .18f, .18f, 1) : palette.accentActive);
+    ImGui::PushStyleColor(ImGuiCol_Text, palette.accentText);
+}
+
+void popAccent() { ImGui::PopStyleColor(4); }
+
 void error(const std::string& message)
 {
     if (message.empty()) return;
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(.85f, .3f, .3f, 1));
+    ImGui::PushStyleColor(ImGuiCol_Text, errorColor());
     ImGui::TextWrapped("%s", message.c_str());
     ImGui::PopStyleColor();
 }
@@ -53,38 +66,18 @@ float buttonWidth(const FooterButton& button)
 // One footer button; returns whether it was pressed.
 bool drawButton(const FooterButton& button)
 {
-    const auto& palette = theme::palette();
     const bool accented = button.primary || button.danger;
-    if (accented) {
-        ImGui::PushStyleColor(ImGuiCol_Button, button.danger ? ImVec4(.78f, .22f, .22f, 1) : palette.accent);
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, button.danger ? ImVec4(.85f, .28f, .28f, 1) : palette.accentHovered);
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, button.danger ? ImVec4(.68f, .18f, .18f, 1) : palette.accentActive);
-        ImGui::PushStyleColor(ImGuiCol_Text, palette.accentText);
-    }
+    if (accented) pushAccent(button.danger);
     ImGui::BeginDisabled(!button.enabled);
     const bool pressed = ImGui::Button(button.label, ImVec2(buttonWidth(button), 0));
     ImGui::EndDisabled();
-    if (accented) ImGui::PopStyleColor(4);
+    if (accented) popAccent();
     return pressed;
 }
 
 }  // namespace
 
-int footer(std::initializer_list<FooterButton> buttons)
-{
-    const auto& style = ImGui::GetStyle();
-    float total = style.ItemSpacing.x * (buttons.size() - 1);
-    for (const auto& button : buttons) total += buttonWidth(button);
-    ImGui::Spacing();
-    ImGui::SetCursorPosX(ImGui::GetWindowWidth() - style.WindowPadding.x - total);
-    int pressed = -1, index = 0;
-    for (const auto& button : buttons) {
-        if (index) ImGui::SameLine();
-        if (drawButton(button)) pressed = index;
-        ++index;
-    }
-    return pressed;
-}
+int footer(std::initializer_list<FooterButton> buttons) { return footer({}, buttons); }
 
 int footer(std::initializer_list<FooterButton> left, std::initializer_list<FooterButton> right)
 {

@@ -1,4 +1,5 @@
 #include "gui/KeyboardWidget.h"
+#include "gui/Text.h"
 #include "gui/Theme.h"
 #include "keymap/KeyboardLayout.h"
 #include "keymap/ScanCodeCatalog.h"
@@ -10,11 +11,7 @@
 #include <vector>
 
 namespace {
-bool sameText(const std::string& a, const std::string& b)
-{
-    return std::equal(a.begin(), a.end(), b.begin(), b.end(),
-                      [](unsigned char x, unsigned char y) { return std::tolower(x) == std::tolower(y); });
-}
+bool sameText(const std::string& a, const std::string& b) { return text::lower(a) == text::lower(b); }
 
 // Greedy word wrap; returns no lines when a single word is wider than maxWidth.
 std::vector<std::string> wrapWords(ImFont* font, float fontSize, const std::string& text, float maxWidth)

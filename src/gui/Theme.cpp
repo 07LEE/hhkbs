@@ -1,4 +1,5 @@
 #include "gui/Theme.h"
+#include "gui/Text.h"
 #include <algorithm>
 #include <array>
 #include <cctype>
@@ -16,19 +17,7 @@ Mode currentMode = Mode::Auto;
 bool currentDark = false;
 bool initialized = false;
 
-std::string run(const char* command)
-{
-    std::string output;
-    if (FILE* pipe = ::popen(command, "r")) {
-        std::array<char, 256> buffer{};
-        while (const auto count = std::fread(buffer.data(), 1, buffer.size(), pipe))
-            output.append(buffer.data(), count);
-        if (::pclose(pipe) != 0) output.clear();
-    }
-    std::transform(output.begin(), output.end(), output.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    return output;
-}
+std::string run(const char* command) { return text::lower(text::commandOutput(command)); }
 
 bool contains(const std::string& text, std::string_view needle) { return text.find(needle) != std::string::npos; }
 }
@@ -51,9 +40,7 @@ static bool systemPrefersDark()
     if (contains(scheme, "prefer-light") || contains(scheme, "default")) return false;
     // Older or non-GNOME setups: fall back to the GTK theme name.
     if (const char* gtk = std::getenv("GTK_THEME")) {
-        std::string name(gtk);
-        std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-        return contains(name, "dark");
+        return contains(text::lower(gtk), "dark");
     }
     return contains(run("gsettings get org.gnome.desktop.interface gtk-theme 2>/dev/null"), "dark");
 }

@@ -34,7 +34,6 @@ private:
     using ScanResult = hhkbs::app::ScanResult;
     using PadResult = hhkbs::app::PadResult;
     using ApplyResult = hhkbs::app::ApplyResult;
-    using ProfileRead = hhkbs::app::ProfileRead;
     using PreviewResult = hhkbs::app::PreviewResult;
     // What the Apply dialog knows about one profile: the keys that differ from what the keyboard holds.
     struct Preview {

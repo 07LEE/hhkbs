@@ -93,6 +93,8 @@ add_executable(hhkbs
     src/gui/KeyboardWidget.h
     src/gui/MainWindow.cpp
     src/gui/MainWindow.h
+    src/gui/Text.cpp
+    src/gui/Text.h
     src/gui/Theme.cpp
     src/gui/Theme.h
 )

@@ -1,4 +1,5 @@
 #include "gui/KeyAssignmentDialog.h"
+#include "gui/Text.h"
 #include "gui/Theme.h"
 #include "gui/DialogWidgets.h"
 #include "keymap/ScanCodeCatalog.h"
@@ -8,14 +9,9 @@
 #include <cctype>
 #include <cstdio>
 #include <string>
+#include <string_view>
 #include <vector>
 
-namespace {
-std::string lower(std::string s) {
-    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) {return std::tolower(c);});
-    return s;
-}
-}
 void KeyAssignmentDialog::reset(hhkbs::keymap::Keymap::ScanCode code, std::string keyName) {
     search_.fill(0);
     std::snprintf(raw_.data(), raw_.size(), "0x%04X", code);
@@ -30,7 +26,7 @@ std::optional<hhkbs::keymap::Keymap::ScanCode> KeyAssignmentDialog::draw(bool& c
                         hhkbs::keymap::ScanCodeCatalog::labelFor(current_).c_str(), current_);
     ImGui::SetNextItemWidth(-1);
     ImGui::InputTextWithHint("##search", "Search keys, categories or hex codes", search_.data(), search_.size());
-    const auto needle = lower(search_.data());
+    const auto needle = text::lower(search_.data());
     bool accept = false;
     // Double-clicking a key opens this dialog on the first click, and the second one lands on whatever row is under the
     // pointer. Until a double click could no longer be that one, a double click does not choose a row.
@@ -49,11 +45,11 @@ std::optional<hhkbs::keymap::Keymap::ScanCode> KeyAssignmentDialog::draw(bool& c
             if (entry.category != category) continue;
             char hex[12];
             std::snprintf(hex, sizeof(hex), "0x%04X", entry.code);
-            if (!needle.empty() && lower(category + " " + entry.label + " " + hex).find(needle) == std::string::npos) continue;
+            if (!needle.empty() && text::lower(category + " " + entry.label + " " + hex).find(needle) == std::string::npos) continue;
             if (!headerShown) { ImGui::SeparatorText(category.c_str()); headerShown = true; }
             ImGui::PushID(entry.code);
             const float rowX = ImGui::GetCursorPosX(), rowWidth = ImGui::GetContentRegionAvail().x;
-            if (ImGui::Selectable(entry.label.c_str(), lower(raw_.data()) == lower(hex), ImGuiSelectableFlags_AllowDoubleClick)) {
+            if (ImGui::Selectable(entry.label.c_str(), text::lower(raw_.data()) == text::lower(hex), ImGuiSelectableFlags_AllowDoubleClick)) {
                 std::snprintf(raw_.data(), raw_.size(), "%s", hex);
                 accept = settled && ImGui::IsMouseDoubleClicked(0);
             }
@@ -77,11 +73,11 @@ std::optional<hhkbs::keymap::Keymap::ScanCode> KeyAssignmentDialog::draw(bool& c
     unsigned code = 0;
     const auto result = std::from_chars(value.data(), value.data()+value.size(), code, 16);
     const bool valid = !value.empty() && value.size() <= 4 && result.ec == std::errc{} &&
-                       result.ptr == value.data()+value.size() && code <= 0xFFFF;
+                       result.ptr == value.data()+value.size();  // four hex digits cannot pass 0xFFFF
     if (!valid) {
         ImGui::SameLine();
         ImGui::AlignTextToFramePadding();
-        ImGui::TextColored(ImVec4(.85f, .3f, .3f, 1), "Enter a hexadecimal value from 0000 to FFFF.");
+        ImGui::TextColored(dialog::errorColor(), "Enter a hexadecimal value from 0000 to FFFF.");
     }
 
     const int hit = dialog::footer({{"Cancel"}, {"Assign", true, false, valid}});

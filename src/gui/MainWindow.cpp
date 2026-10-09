@@ -7,7 +7,6 @@
 #include "keymap/KeyboardLayout.h"
 #include "keymap/ProfileFiles.h"
 #include "keymap/ScanCodeCatalog.h"
-#include "keymap/ProfileSerializer.h"
 #include <imgui.h>
 #include <algorithm>
 #include <chrono>
@@ -17,7 +16,6 @@
 #include <ctime>
 #include <exception>
 #include <functional>
-#include <unistd.h>
 #include <spawn.h>
 #include <sys/wait.h>
 #include <utility>
@@ -408,9 +406,9 @@ bool MainWindow::loadBackup(const hhkbs::keymap::BackupEntry& entry)
 }
 void MainWindow::openBackupFolder()
 {
-    switch (openFolder(hhkbs::keymap::backupDirectory())) {
+    switch (openFolder(backupList_.directory())) {
     case OpenResult::NoOpener:
-        dialogError_ = "xdg-open was not found. Open " + hhkbs::keymap::backupDirectory().string() + " yourself.";
+        dialogError_ = "xdg-open was not found. Open " + backupList_.directory().string() + " yourself.";
         break;
     case OpenResult::Failed: dialogError_ = "Could not open the folder."; break;
     case OpenResult::Opened: dialogError_.clear(); break;
@@ -420,7 +418,7 @@ void MainWindow::openBackupFolder()
 // own height from the list. So nothing under the list ever floats away from it, whatever the dialog shows.
 void MainWindow::drawBackupList(const float belowList)
 {
-    const auto folder = hhkbs::keymap::backupDirectory();
+    const auto& folder = backupList_.directory();
     ImGui::AlignTextToFramePadding();
     ImGui::TextDisabled("%s", folder.c_str());
     // The button that opens the folder sits on the line that names it.
@@ -506,7 +504,6 @@ void MainWindow::drawBackups()
         ImGui::AlignTextToFramePadding();
         ImGui::TextUnformatted("Tag");
         ImGui::SameLine();
-        const auto& style = ImGui::GetStyle();
         const auto buttonWidth = [&](const char* label) { return ImGui::CalcTextSize(label).x + style.FramePadding.x * 2; };
         // Save tag belongs to the input, so it sits close to it; Delete keeps the usual gap so it is not hit by mistake.
         const float tagGap = theme::dp(4.f);
@@ -515,13 +512,9 @@ void MainWindow::drawBackups()
         ImGui::SameLine(0, tagGap);
         const bool saveClicked = ImGui::Button("Save tag");
         ImGui::SameLine();
-        const auto& palette = theme::palette();
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(.78f, .22f, .22f, 1));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(.85f, .28f, .28f, 1));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(.68f, .18f, .18f, 1));
-        ImGui::PushStyleColor(ImGuiCol_Text, palette.accentText);
+        dialog::pushAccent(true);
         const bool deleteClicked = ImGui::Button("Delete");
-        ImGui::PopStyleColor(4);
+        dialog::popAccent();
         ImGui::EndDisabled();
         if (chosen && (entered || saveClicked)) saveBackupTag();
         if (chosen && deleteClicked) { confirmDelete_ = true; ImGui::OpenPopup("Delete backup"); }
@@ -1047,12 +1040,11 @@ void MainWindow::draw()
     ImGui::BeginDisabled(!work_.loaded || busy);
     ImGui::AlignTextToFramePadding();
     ImGui::TextUnformatted("Layer");
-    const char* layers[] = {"Base", "Fn1", "Fn2", "Fn3"};
     for (std::size_t i=0; i<4; ++i) {
         ImGui::SameLine();
         const bool selected = i == layer_;
         if (selected) ImGui::PushStyleColor(ImGuiCol_Button, theme::palette().selected);
-        if (ImGui::Button(layers[i], theme::dp(76, 32))) layer_ = i;
+        if (ImGui::Button(layerNames[i], theme::dp(76, 32))) layer_ = i;
         if (selected) ImGui::PopStyleColor();
     }
     ImGui::EndDisabled();
@@ -1137,17 +1129,14 @@ void MainWindow::draw()
     const float rightX = ImGui::GetWindowWidth() - style.WindowPadding.x - buttonWidth("Apply to keyboard");
     if (rightX >= ImGui::GetItemRectMax().x - ImGui::GetWindowPos().x + theme::dp(36.f)) ImGui::SameLine(rightX);
     else ImGui::SameLine();
-    ImGui::PushStyleColor(ImGuiCol_Button, theme::palette().accent);
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, theme::palette().accentHovered);
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, theme::palette().accentActive);
-    ImGui::PushStyleColor(ImGuiCol_Text, theme::palette().accentText);
+    dialog::pushAccent();
     const bool nothingToApply = editedProfiles.empty();
     ImGui::BeginDisabled(!work_.loaded || demo_ || busy || bluetooth_ || nothingToApply);
     if (ImGui::Button("Apply to keyboard")) openApply();
     ImGui::EndDisabled();
     if (bluetooth_) ImGui::SetItemTooltip("Applying needs a USB connection");
     else if (nothingToApply && work_.loaded && !demo_) ImGui::SetItemTooltip("No profile has changes to write");
-    ImGui::PopStyleColor(4);
+    dialog::popAccent();
     drawDialog();
     ImGui::End();
 }

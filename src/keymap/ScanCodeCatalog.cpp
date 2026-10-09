@@ -35,7 +35,7 @@ std::vector<ScanCodeEntry> makeEntries()
         });
     }
 
-    const std::array<ScanCodeEntry, 18> common{{
+    const auto common = std::to_array<ScanCodeEntry>({
         {0x0028, "Enter", "Editing"},
         {0x0029, "Escape", "Editing"},
         {0x002A, "Backspace", "Editing"},
@@ -54,7 +54,7 @@ std::vector<ScanCodeEntry> makeEntries()
         {0x0037, "Period", "Symbols"},
         {0x0038, "Slash", "Symbols"},
         {0x0039, "Caps Lock", "Editing"},
-    }};
+    });
     entries.insert(entries.end(), common.begin(), common.end());
 
     for (std::uint16_t index = 0; index < 12; ++index) {
@@ -65,7 +65,7 @@ std::vector<ScanCodeEntry> makeEntries()
         });
     }
 
-    const std::array<ScanCodeEntry, 13> navigation{{
+    const auto navigation = std::to_array<ScanCodeEntry>({
         {0x0046, "Print Screen", "Navigation"},
         {0x0047, "Scroll Lock", "Navigation"},
         {0x0048, "Pause", "Navigation"},
@@ -79,7 +79,7 @@ std::vector<ScanCodeEntry> makeEntries()
         {0x0050, "Left Arrow", "Navigation"},
         {0x0051, "Down Arrow", "Navigation"},
         {0x0052, "Up Arrow", "Navigation"},
-    }};
+    });
     entries.insert(entries.end(), navigation.begin(), navigation.end());
 
     for (std::uint16_t index = 0; index < 12; ++index) {
@@ -90,7 +90,7 @@ std::vector<ScanCodeEntry> makeEntries()
         });
     }
 
-    const std::array<ScanCodeEntry, 17> keypad{{
+    const auto keypad = std::to_array<ScanCodeEntry>({
         {0x0053, "Num Lock", "Keypad"},
         {0x0054, "Keypad Slash", "Keypad"},
         {0x0055, "Keypad Asterisk", "Keypad"},
@@ -108,10 +108,10 @@ std::vector<ScanCodeEntry> makeEntries()
         {0x0061, "Keypad 9", "Keypad"},
         {0x0062, "Keypad 0", "Keypad"},
         {0x0063, "Keypad Period", "Keypad"},
-    }};
+    });
     entries.insert(entries.end(), keypad.begin(), keypad.end());
 
-    const std::array<ScanCodeEntry, 46> studioFunctions{{
+    const auto studioFunctions = std::to_array<ScanCodeEntry>({
         {0x0078, "Stop", "Media"},
         {0x00A5, "Power", "Media"},
         {0x00A8, "Mute", "Media"},
@@ -158,13 +158,13 @@ std::vector<ScanCodeEntry> makeEntries()
         {0x5FA2, "Pointer Speed Increase", "HHKB Studio"},
         {0x5FA3, "Pointer Speed Decrease", "HHKB Studio"},
         {0x5FA4, "Pointer Speed 1", "HHKB Studio"},
-    }};
+        {0x5FA5, "Pointer Speed 2", "HHKB Studio"},
+        {0x5FA6, "Pointer Speed 3", "HHKB Studio"},
+        {0x5FA7, "Pointer Speed 4", "HHKB Studio"},
+    });
     entries.insert(entries.end(), studioFunctions.begin(), studioFunctions.end());
-    entries.push_back({0x5FA5, "Pointer Speed 2", "HHKB Studio"});
-    entries.push_back({0x5FA6, "Pointer Speed 3", "HHKB Studio"});
-    entries.push_back({0x5FA7, "Pointer Speed 4", "HHKB Studio"});
 
-    const std::array<ScanCodeEntry, 11> modifiers{{
+    const auto modifiers = std::to_array<ScanCodeEntry>({
         {0x00E0, "Left Control", "Modifiers"},
         {0x00E1, "Left Shift", "Modifiers"},
         {0x00E2, "Left Alt", "Modifiers"},
@@ -176,7 +176,7 @@ std::vector<ScanCodeEntry> makeEntries()
         {0x5101, "Fn1", "HHKB Studio"},
         {0x5102, "Fn2", "HHKB Studio"},
         {0x5103, "Fn3", "HHKB Studio"},
-    }};
+    });
     entries.insert(entries.end(), modifiers.begin(), modifiers.end());
     return entries;
 }

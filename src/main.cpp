@@ -1,5 +1,6 @@
 #include "gui/MainWindow.h"
 #include "gui/HangulSyllables.h"
+#include "gui/Text.h"
 #include "gui/Theme.h"
 #include <GLFW/glfw3.h>
 #include <imgui.h>
@@ -18,6 +19,7 @@
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <stdexcept>
 #include <optional>
 #include <string_view>
 #include <vector>
@@ -35,14 +37,9 @@ struct FontFile {
 // the application.
 std::optional<FontFile> findFont(const char* pattern)
 {
-    std::string output;
     const std::string command = std::string("fc-match --format='%{file}\\n%{index}' '") + pattern + "' 2>/dev/null";
-    if (FILE* query = ::popen(command.c_str(), "r")) {
-        std::array<char, 1024> buffer{};
-        while (const auto count = std::fread(buffer.data(), 1, buffer.size(), query))
-            output.append(buffer.data(), count);
-        if (::pclose(query) != 0) return std::nullopt;
-    }
+    const std::string output = text::commandOutput(command.c_str());
+    if (output.empty()) return std::nullopt;
     const auto newline = output.find('\n');
     FontFile font{output.substr(0, newline), 0};
     if (newline != std::string::npos) font.index = std::atoi(output.c_str() + newline + 1);

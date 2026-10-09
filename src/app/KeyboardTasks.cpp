@@ -97,14 +97,17 @@ ScanResult scanKeyboard(KeyboardAccess& access, const std::optional<std::uint16_
                 result.serial = info.serialNumber;
                 result.path = item.path;
                 result.bluetooth = item.bluetooth;
+                bool padsUnread = false;
                 for (std::size_t pad = 0; pad < result.pads.size(); ++pad) {
-                    try { result.pads[pad] = device.padState(pad); } catch (const std::exception&) {}
+                    try { result.pads[pad] = device.padState(pad); } catch (const std::exception&) { padsUnread = true; }
                 }
                 result.status = "Connected";
                 result.detail = info.modelName + " / " + info.keyboardLayout +
                     " / Firmware " + info.firmwareVersion + " / Profile " + std::to_string(profile+1);
                 if (profile != info.currentProfile)
                     result.detail += " (keyboard is on Profile " + std::to_string(info.currentProfile+1) + ")";
+                // A pad that was not read shows as unknown; the line says why, instead of leaving it a mystery.
+                if (padsUnread) result.detail += " / Gesture pad state could not be read";
                 return result;
             } catch (const std::exception& error) { if (firstError.empty()) firstError = error.what(); }
         }

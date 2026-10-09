@@ -23,7 +23,7 @@ public:
     std::vector<std::uint8_t> savedBytes;   // what it held when it was last saved, loaded or applied
     std::string summary;                    // where it came from, for the caption
     bool loaded = false;                    // there is something on screen
-    std::optional<std::uint16_t> selected;  // the keyboard profile on screen; only set once it has been read or applied
+    std::optional<std::uint16_t> selected;  // the keyboard profile on screen; only set once it has been read from the keyboard
     std::array<std::optional<Stash>, 4> stashed;
     // What the keyboard held for each profile when it was last read or written; empty when it has not been read.
     std::array<std::vector<std::uint8_t>, 4> keyboardBytes;

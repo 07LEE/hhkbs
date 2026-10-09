@@ -114,6 +114,8 @@ void scanReadsTheCurrentProfile()
     require(result.profile == 2 && result.bytes == keyboard.memory, "the current profile was not read");
     require(result.serial == "A" && result.path == "/dev/hidraw0", "the keyboard was not identified");
     require(contains(result.detail, "Profile 3"), "the profile on screen was not named");
+    // The fake keyboard does not answer the pad requests, and the line says so.
+    require(contains(result.detail, "Gesture pad state could not be read"), "pads that could not be read were not mentioned");
 }
 
 void scanReadsAnotherProfileAndLeavesTheKeyboardOnItsOwn()

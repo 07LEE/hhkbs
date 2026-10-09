@@ -150,6 +150,30 @@ void factoryProfileContainsAllDefaultLayers()
     require(profile.scanCode(3, 0) == 0x0029, "Fn3 base default is incorrect");
 }
 
+void layoutAndCatalogAgree()
+{
+    // The layout says what each key sends out of the box, and the factory profile is built from it.
+    const Keymap factory(hhkbs::keymap::KeyboardLayout::usWindowsFactoryProfile());
+    for (const auto* keys : {&hhkbs::keymap::KeyboardLayout::usStudio(), &hhkbs::keymap::KeyboardLayout::gesturePads()}) {
+        for (const auto& position : *keys) {
+            require(factory.scanCode(0, position.slot) == position.defaultScanCode,
+                    "the layout's default for " + position.legend + " is not what the factory profile has");
+        }
+    }
+
+    // The catalog names every code once, so a list that came out short or doubled would show here.
+    std::vector<Keymap::ScanCode> seen;
+    for (const auto& entry : hhkbs::keymap::ScanCodeCatalog::entries()) {
+        require(!entry.label.empty() && !entry.category.empty(), "a catalog entry has no label or category");
+        require(std::find(seen.begin(), seen.end(), entry.code) == seen.end(), "a scan code is in the catalog twice: " + entry.label);
+        seen.push_back(entry.code);
+        require(hhkbs::keymap::ScanCodeCatalog::labelFor(entry.code) == entry.label, "a catalog label is not the one looked up for its code");
+    }
+    require(seen.size() > 100, "the catalog is far shorter than it should be");
+    for (const Keymap::ScanCode code : {0x5FA4, 0x5FA5, 0x5FA6, 0x5FA7})
+        require(hhkbs::keymap::ScanCodeCatalog::labelFor(code).starts_with("Pointer Speed"), "a pointer speed is missing from the catalog");
+}
+
 void tomlProfilesRoundTrip()
 {
     Keymap original(hhkbs::keymap::KeyboardLayout::demoProfile());
@@ -367,6 +391,7 @@ int main()
         studioLayoutHasUniqueEditableSlots();
         gesturePadLayoutHasAllDirections();
         factoryProfileContainsAllDefaultLayers();
+        layoutAndCatalogAgree();
         tomlProfilesRoundTrip();
         tomlCommentsAndStringsAreNotSyntax();
         unusualFilesAreHandled();
