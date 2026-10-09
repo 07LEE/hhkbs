@@ -6,6 +6,9 @@
 #include <iostream>
 #include <ctime>
 #include <stdexcept>
+#include <chrono>
+#include <cstdlib>
+#include <sys/stat.h>
 #include <unistd.h>
 
 namespace {
@@ -134,8 +137,12 @@ int main() {
             const auto listed = listBackups(crowded);
             if (listed.size() != 2 || listed[0].path != second || listed[1].path != first)
                 throw std::runtime_error("Backups from the same second must be listed with the later one first");
-            if (newBackupPath(crowded, now, 1) != crowded / backupFileName(now, 1))
-                throw std::runtime_error("Another profile does not share the name");
+            // A backup of another profile made after them lists as the newest, so it cannot take their second either.
+            const auto third = newBackupPath(crowded, now, 1);
+            std::ofstream(third) << "x";
+            const auto afterThird = listBackups(crowded);
+            if (afterThird.size() != 3 || afterThird[0].path != third || afterThird[0].profile != 1)
+                throw std::runtime_error("A backup made after the others must list as the newest, whichever profile it is for");
         }
 
         // Notes on backups.
@@ -170,6 +177,146 @@ int main() {
             setBackupTag(roundTrip, backup, "keep");
             deleteBackup(roundTrip, backup);
             if (std::filesystem::exists(tagPathFor(backup.path))) throw std::runtime_error("Deleting a backup should delete its tag");
+        }
+
+        // What readProfile refuses before it reads anything, and says why.
+        {
+            const auto refusal = [&](const std::filesystem::path& file) {
+                try { static_cast<void>(readProfile(file)); } catch (const std::exception& error) { return std::string(error.what()); }
+                return std::string();
+            };
+            const auto has = [](const std::string& text, const char* part) { return text.find(part) != std::string::npos; };
+            if (!has(refusal(directory / "nothing-here.toml"), "Could not open")) throw std::runtime_error("A missing file was not reported as such");
+            if (!has(refusal(directory), "folder")) throw std::runtime_error("A folder was not reported as a folder");
+            const auto pipe = directory / "pipe.toml";
+            if (::mkfifo(pipe.c_str(), 0600) != 0) throw std::runtime_error("could not make a pipe");
+            if (!has(refusal(pipe), "not a profile file")) throw std::runtime_error("A pipe was read, or not reported");
+            const auto huge = directory / "huge.toml";
+            { std::ofstream file(huge, std::ios::binary); file << std::string(maxProfileFileBytes + 1, '#'); }
+            if (!has(refusal(huge), "too large")) throw std::runtime_error("A file far larger than any profile was read");
+            { std::ofstream file(directory / "empty.toml"); }
+            if (refusal(directory / "empty.toml").empty()) throw std::runtime_error("An empty file was taken for a profile");
+        }
+
+        // A folder that has a backup's name is not a backup, and is not deleted as one.
+        {
+            const auto lookalike = backups / "backup-20250101-000000-profile1.toml";
+            std::ofstream(lookalike / "precious.txt") << "x";
+            bool refused = false;
+            try { deleteBackup(backups, BackupEntry{lookalike, 0, "2025-01-01 00:00:00"}); }
+            catch (const std::invalid_argument&) { refused = true; }
+            if (!refused) throw std::runtime_error("A folder with a backup's name was deleted");
+            if (!std::filesystem::exists(lookalike / "precious.txt")) throw std::runtime_error("The folder's content was lost");
+        }
+
+        // Tags are written whole, for their owner only, and a tag that cannot be saved leaves the old one alone.
+        {
+            const auto folder = directory / "tags";
+            std::filesystem::create_directories(folder);
+            const auto name = folder / backupFileName(std::time(nullptr), 0);
+            std::ofstream(name) << "x";
+            auto entry = listBackups(folder).front();
+            setBackupTag(folder, entry, "first");
+            struct stat info{};
+            if (::stat(tagPathFor(name).c_str(), &info) != 0 || (info.st_mode & 0777) != 0600)
+                throw std::runtime_error("A tag file should be readable and writable by its owner only");
+            if (::geteuid() != 0) {
+                std::filesystem::permissions(folder, std::filesystem::perms::owner_read | std::filesystem::perms::owner_exec);
+                bool failed = false;
+                try { setBackupTag(folder, entry, "second"); } catch (const std::exception&) { failed = true; }
+                std::filesystem::permissions(folder, std::filesystem::perms::owner_all);
+                if (!failed) throw std::runtime_error("A tag that could not be written was reported as saved");
+                if (listBackups(folder).front().tag != "first") throw std::runtime_error("A failed write changed the tag");
+                for (const auto& item : std::filesystem::directory_iterator(folder))
+                    if (item.path().string().find(".tmp") != std::string::npos) throw std::runtime_error("A failed write left a temporary file");
+            }
+        }
+
+        // Where backups go: only absolute locations count, and what is made is for the owner alone.
+        {
+            const auto remember = [](const char* name) { const char* value = std::getenv(name); return value ? std::string(value) : std::string(); };
+            const auto state = remember("XDG_STATE_HOME"), home = remember("HOME");
+            ::setenv("XDG_STATE_HOME", "relative/state", 1);
+            ::setenv("HOME", "/home/someone", 1);
+            const auto fromHome = backupDirectory();
+            ::setenv("XDG_STATE_HOME", "/var/lib/state", 1);
+            const auto fromState = backupDirectory();
+            ::setenv("HOME", "also/relative", 1);
+            ::unsetenv("XDG_STATE_HOME");
+            const auto relativeEverywhere = backupDirectory();
+            if (state.empty()) ::unsetenv("XDG_STATE_HOME"); else ::setenv("XDG_STATE_HOME", state.c_str(), 1);
+            if (home.empty()) ::unsetenv("HOME"); else ::setenv("HOME", home.c_str(), 1);
+            if (fromHome != std::filesystem::path("/home/someone/.local/state/hhkbs/backups"))
+                throw std::runtime_error("A relative XDG_STATE_HOME was used: " + fromHome.string());
+            if (fromState != std::filesystem::path("/var/lib/state/hhkbs/backups")) throw std::runtime_error("An absolute XDG_STATE_HOME was not used");
+            if (!relativeEverywhere.is_absolute()) throw std::runtime_error("A relative folder was used for backups");
+
+            const auto base = directory / "newplace";
+            const auto target = base / "state" / "hhkbs" / "backups";
+            std::filesystem::create_directories(base);
+            std::filesystem::permissions(base, std::filesystem::perms::owner_all | std::filesystem::perms::group_read | std::filesystem::perms::others_read);
+            ensureBackupDirectory(target);
+            const auto modeOf = [](const std::filesystem::path& folder) { return std::filesystem::status(folder).permissions() & std::filesystem::perms::mask; };
+            if (modeOf(target) != std::filesystem::perms::owner_all || modeOf(target.parent_path()) != std::filesystem::perms::owner_all)
+                throw std::runtime_error("Folders made for backups can be entered by others");
+            if (modeOf(base) == std::filesystem::perms::owner_all) throw std::runtime_error("A folder that was there before was changed");
+            ensureBackupDirectory(target);  // again: nothing to do, nothing to fail
+        }
+
+        // A name is never taken when the clock repeats, or when the folder cannot be looked at.
+        {
+            const auto folder = directory / "clockwork";
+            std::filesystem::create_directories(folder);
+            const char* zone = std::getenv("TZ");
+            const std::string kept = zone ? zone : "";
+            ::setenv("TZ", "EST5EDT,M3.2.0,M11.1.0", 1);  // summer time ends on 1 November 2026, at 2:00 becoming 1:00
+            ::tzset();
+            std::ofstream(folder / "backup-20261101-013000-profile1.toml") << "x";  // made in the first 1:30
+            std::tm second{};  // 1:10 for the second time, an hour after the clocks went back
+            second.tm_year = 2026 - 1900; second.tm_mon = 10; second.tm_mday = 1; second.tm_hour = 6; second.tm_min = 10;
+            const auto repeated = newBackupPath(folder, timegm(&second), 0).filename().string();
+            if (zone) ::setenv("TZ", kept.c_str(), 1); else ::unsetenv("TZ");
+            ::tzset();
+            if (repeated.substr(7, 15) <= std::string("20261101-013000"))
+                throw std::runtime_error("A backup made after another was named as if it were older: " + repeated);
+
+            if (::geteuid() != 0) {
+                const auto locked = directory / "locked";
+                std::filesystem::create_directories(locked);
+                std::filesystem::permissions(locked, std::filesystem::perms::none);
+                const auto started = std::chrono::steady_clock::now();
+                bool threw = false;
+                try { static_cast<void>(newBackupPath(locked, std::time(nullptr), 0)); } catch (const std::system_error&) { threw = true; }
+                std::filesystem::permissions(locked, std::filesystem::perms::owner_all);
+                if (!threw) throw std::runtime_error("A folder that cannot be looked at was given a name");
+                if (std::chrono::steady_clock::now() - started > std::chrono::seconds(2)) throw std::runtime_error("It tried hundreds of names first");
+            }
+        }
+
+        // What is left behind is cleaned up, and nothing else is touched.
+        {
+            const auto folder = directory / "strays";
+            std::filesystem::create_directories(folder);
+            const auto make = [&](const std::string& fileName, const bool old) {
+                std::ofstream(folder / fileName) << "x";
+                if (old) std::filesystem::last_write_time(folder / fileName, std::filesystem::file_time_type::clock::now() - std::chrono::hours(3));
+            };
+            make("backup-20260101-090000-profile1.toml", false);
+            make("backup-20260101-090000-profile1.toml.tag", false);         // its note: kept
+            make("backup-20260102-090000-profile1.toml.tag", false);         // a note whose backup is gone
+            make("backup-20260101-090000-profile1.toml.tmp.aB3dEf", true);   // a write cut short long ago
+            make("backup-20260101-090000-profile1.toml.tag.tmp.aB3dEf", true);
+            make("backup-20260101-090000-profile1.toml.tmp.zZ9yXw", false);  // one being written just now
+            make("notes.tag", false);                                       // not ours
+            make("holiday.tmp.abcdef", true);                               // not ours
+            if (removeStrayFiles(folder) != 3) throw std::runtime_error("The wrong number of stray files was removed");
+            const auto exists = [&](const char* fileName) { return std::filesystem::exists(folder / fileName); };
+            if (!exists("backup-20260101-090000-profile1.toml") || !exists("backup-20260101-090000-profile1.toml.tag")
+                || !exists("backup-20260101-090000-profile1.toml.tmp.zZ9yXw") || !exists("notes.tag") || !exists("holiday.tmp.abcdef"))
+                throw std::runtime_error("A file that was not stray was removed");
+            if (exists("backup-20260102-090000-profile1.toml.tag") || exists("backup-20260101-090000-profile1.toml.tmp.aB3dEf"))
+                throw std::runtime_error("A stray file was left");
+            if (removeStrayFiles(directory / "no-such-folder") != 0) throw std::runtime_error("A missing folder has nothing to clean");
         }
 
         std::filesystem::remove_all(directory);

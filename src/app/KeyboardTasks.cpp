@@ -164,7 +164,7 @@ ApplyResult applyProfiles(KeyboardAccess& access,
 
                     // Keep a copy of what the keyboard held; without it a failed write cannot be undone by hand.
                     const auto directory = hhkbs::keymap::backupDirectory();
-                    std::filesystem::create_directories(directory);
+                    hhkbs::keymap::ensureBackupDirectory(directory);
                     path = hhkbs::keymap::newBackupPath(directory, std::time(nullptr), profile);
                     hhkbs::keymap::writeProfile(path, hhkbs::keymap::Keymap(backup), false);
 

@@ -1,56 +1,43 @@
 #include "keymap/ProfileFiles.h"
+#include "keymap/AtomicFile.h"
 #include "keymap/ProfileSerializer.h"
 #include <cerrno>
-#include <fstream>
-#include <iterator>
+#include <cstdio>
 #include <stdexcept>
+#include <string>
+#include <sys/stat.h>
 #include <system_error>
-#include <vector>
 #include <unistd.h>
 
 namespace hhkbs::keymap {
+
 Keymap readProfile(const std::filesystem::path& path)
 {
-    std::ifstream input(path, std::ios::binary);
-    if (!input) throw std::runtime_error("Could not open the profile file.");
-    std::string text{std::istreambuf_iterator<char>(input), {}};
-    if (input.bad()) throw std::runtime_error("Could not read the profile file.");
+    struct stat info{};
+    if (::stat(path.c_str(), &info) != 0) throw std::runtime_error("Could not open the profile file.");
+    // Checked before opening: opening a pipe or a device could wait forever, and a profile is a few kilobytes.
+    if (S_ISDIR(info.st_mode)) throw std::runtime_error("That is a folder, not a profile file.");
+    if (!S_ISREG(info.st_mode)) throw std::runtime_error("That is not a profile file.");
+    if (info.st_size > static_cast<off_t>(maxProfileFileBytes)) throw std::runtime_error("That file is too large to be a profile.");
+
+    std::FILE* file = std::fopen(path.c_str(), "rb");
+    if (!file) throw std::runtime_error("Could not open the profile file.");
+    std::string text;
+    char buffer[4096];
+    std::size_t count = 0;
+    while ((count = std::fread(buffer, 1, sizeof buffer, file)) > 0) {
+        text.append(buffer, count);
+        if (text.size() > maxProfileFileBytes) { std::fclose(file); throw std::runtime_error("That file is too large to be a profile."); }
+    }
+    const bool failed = std::ferror(file) != 0;
+    std::fclose(file);
+    if (failed) throw std::runtime_error("Could not read the profile file.");
     return ProfileSerializer::fromToml(text);
 }
 
-void writeProfile(const std::filesystem::path& path, const Keymap& keymap, bool overwrite)
+void writeProfile(const std::filesystem::path& path, const Keymap& keymap, const bool overwrite)
 {
-    const auto text = ProfileSerializer::toToml(keymap);
-    auto pattern = path.string() + ".tmp.XXXXXX";
-    std::vector<char> name(pattern.begin(), pattern.end());
-    name.push_back('\0');
-    int fd = ::mkstemp(name.data());
-    if (fd < 0) throw std::system_error(errno, std::generic_category(), "Create export file");
-    try {
-        std::size_t offset = 0;
-        while (offset < text.size()) {
-            const auto count = ::write(fd, text.data() + offset, text.size() - offset);
-            if (count < 0 && errno == EINTR) continue;
-            if (count <= 0) throw std::system_error(errno, std::generic_category(), "Write profile");
-            offset += static_cast<std::size_t>(count);
-        }
-        if (::fsync(fd) != 0) throw std::system_error(errno, std::generic_category(), "Flush profile");
-        const int closeResult = ::close(fd);
-        fd = -1;
-        if (closeResult != 0) throw std::system_error(errno, std::generic_category(), "Close profile");
-        if (overwrite) {
-            if (::rename(name.data(), path.c_str()) != 0)
-                throw std::system_error(errno, std::generic_category(), "Replace profile");
-        } else {
-            // link() refuses an existing target, including a dangling symlink.
-            if (::link(name.data(), path.c_str()) != 0)
-                throw std::system_error(errno, std::generic_category(), "Save profile");
-        }
-        ::unlink(name.data());
-    } catch (...) {
-        if (fd >= 0) ::close(fd);
-        ::unlink(name.data());
-        throw;
-    }
+    writeFileAtomically(path, ProfileSerializer::toToml(keymap), overwrite);
 }
-}
+
+}  // namespace hhkbs::keymap

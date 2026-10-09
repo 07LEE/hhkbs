@@ -16,15 +16,22 @@ struct BackupEntry {
 
 inline constexpr std::size_t maxBackupTagLength = 40;  // characters
 
-// $XDG_STATE_HOME/hhkbs/backups, or ~/.local/state/hhkbs/backups.
+// $XDG_STATE_HOME/hhkbs/backups, or ~/.local/state/hhkbs/backups. A relative XDG_STATE_HOME or HOME is not used, as the
+// XDG specification says; the account's home folder is the last resort, and /tmp/hhkbs-<user id> when there is none.
 [[nodiscard]] std::filesystem::path backupDirectory();
 
-// backup-YYYYmmdd-HHMMSS-profileN.toml, where N is the 1-based profile number.
+// Makes sure the folder exists. Folders made here can be entered by their owner only, since a backup holds the
+// keyboard's whole configuration. Throws std::filesystem::filesystem_error.
+void ensureBackupDirectory(const std::filesystem::path& directory);
+
+// backup-YYYYmmdd-HHMMSS-profileN.toml, where N is the 1-based profile number. The time is local time.
 [[nodiscard]] std::string backupFileName(std::time_t when, std::uint16_t profile);
 
-// A path in `directory` for a new backup of `profile` that nothing uses yet. When the name for `when` is taken, the
-// time is moved on a second at a time, so the name keeps its form and the newer backup still sorts as newer.
-// Throws when no free name is found.
+// A path in `directory` for a new backup of `profile` that nothing uses yet. A name sorts as newer than every backup
+// already there, whichever profile it is for: when the name for `when` is taken, or is not later than the newest one
+// (the clock was set back, or the local time repeated at the end of summer time), the time is moved on a second at a
+// time, so the name keeps its form and the newer backup still lists as newer. Throws when no free name is found or
+// the folder cannot be looked at.
 [[nodiscard]] std::filesystem::path newBackupPath(const std::filesystem::path& directory, std::time_t when,
                                                   std::uint16_t profile);
 
@@ -41,7 +48,13 @@ inline constexpr std::size_t maxBackupTagLength = 40;  // characters
 // control characters, and for anything that is not an existing backup directly inside `directory`.
 void setBackupTag(const std::filesystem::path& directory, const BackupEntry& entry, const std::string& tag);
 
-// Deletes one backup and its note. Refuses anything that is not a backup file directly inside `directory`.
+// Deletes one backup and its note. Refuses anything that is not a backup file directly inside `directory`, a folder
+// that has a backup's name included.
 void deleteBackup(const std::filesystem::path& directory, const BackupEntry& entry);
+
+// Removes what is left behind in `directory`: notes whose backup is gone, and temporary files of a write that was cut
+// short (older than an hour, so one being written now is left alone). Only files with the names this program gives
+// them are touched. Returns how many were removed.
+std::size_t removeStrayFiles(const std::filesystem::path& directory);
 
 }  // namespace hhkbs::keymap

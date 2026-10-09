@@ -5,6 +5,7 @@
 #include "keymap/ScanCodeCatalog.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <exception>
 #include <iostream>
@@ -232,6 +233,24 @@ std::string refusal(const std::string& text)
 
 bool rejected(const std::string& text) { return !refusal(text).empty(); }
 
+void unusualFilesAreHandled()
+{
+    Keymap original(hhkbs::keymap::KeyboardLayout::demoProfile());
+    const auto written = hhkbs::keymap::ProfileSerializer::toToml(original);
+    require(hhkbs::keymap::ProfileSerializer::fromToml("\xEF\xBB\xBF" + written).toBytes() == original.toBytes(),
+            "a profile saved with a byte order mark was not read");
+
+    // A crafted file of nothing but headers is refused at once, not after searching it over and over.
+    std::string headers;
+    for (int i = 0; i < 100000; ++i) headers += "[[layers]]";
+    const auto started = std::chrono::steady_clock::now();
+    require(rejected(headers), "a file of nothing but headers was accepted");
+    std::string oneLine;
+    for (int i = 0; i < 100000; ++i) oneLine += " [[layers]] ";
+    require(rejected(oneLine), "a long line of headers was accepted");
+    require(std::chrono::steady_clock::now() - started < std::chrono::seconds(2), "refusing a crafted file took far too long");
+}
+
 void malformedTomlIsRejected()
 {
     requireThrows<std::invalid_argument>(
@@ -350,6 +369,7 @@ int main()
         factoryProfileContainsAllDefaultLayers();
         tomlProfilesRoundTrip();
         tomlCommentsAndStringsAreNotSyntax();
+        unusualFilesAreHandled();
         malformedTomlIsRejected();
         tomlAcceptsTheFormsPeopleWrite();
         diffListsOnlyTheChangedKeys();
