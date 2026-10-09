@@ -203,6 +203,35 @@ void tomlCommentsAndStringsAreNotSyntax()
     require(parsed.toBytes() == original.toBytes(), "a comment or string was read as TOML syntax");
 }
 
+// One [[layers]] table holding `count` codes, each written as `code`.
+std::string layerTable(const std::size_t count, const std::string& code = "0x0004")
+{
+    std::string table = "[[layers]]\nscancodes = [\n";
+    for (std::size_t index = 0; index < count; ++index) table += "  " + code + ",\n";
+    return table + "]\n";
+}
+
+std::string document(const std::size_t layers, const std::size_t codesPerLayer = Keymap::keysPerLayer,
+                     const std::string& code = "0x0004")
+{
+    std::string text;
+    for (std::size_t layer = 0; layer < layers; ++layer) text += layerTable(codesPerLayer, code) + "\n";
+    return text;
+}
+
+// What the reader says about a document it refuses; empty when it accepts it.
+std::string refusal(const std::string& text)
+{
+    try {
+        static_cast<void>(hhkbs::keymap::ProfileSerializer::fromToml(text));
+    } catch (const std::invalid_argument& error) {
+        return error.what();
+    }
+    return {};
+}
+
+bool rejected(const std::string& text) { return !refusal(text).empty(); }
+
 void malformedTomlIsRejected()
 {
     requireThrows<std::invalid_argument>(
@@ -212,6 +241,61 @@ void malformedTomlIsRejected()
                     "[[layers]]\nscancodes = [0x0004]\n"));
         },
         "incomplete TOML profile was accepted");
+
+    require(!rejected(document(Keymap::layerCount)), "a well formed profile was refused");
+    require(rejected(""), "an empty document was accepted");
+    require(rejected("# only a comment\n"), "a document without layers was accepted");
+    // The reader says what is wrong, since the person who wrote the file only has that message to go on.
+    require(refusal(document(Keymap::layerCount - 1)).find("four layers") != std::string::npos, "a missing layer was not named");
+    require(refusal(document(Keymap::layerCount + 1)).find("four layers") != std::string::npos, "an extra layer was not named");
+    require(refusal(document(Keymap::layerCount, Keymap::keysPerLayer - 1)).find("120 scan codes") != std::string::npos,
+            "a missing code was not named");
+    require(refusal(document(Keymap::layerCount, Keymap::keysPerLayer + 1)).find("120 scan codes") != std::string::npos,
+            "an extra code was not named");
+
+    std::string noCodes = document(Keymap::layerCount - 1) + "[[layers]]\n";
+    require(rejected(noCodes), "a layer without scancodes was accepted");
+    std::string unclosed = document(Keymap::layerCount - 1) + "[[layers]]\nscancodes = [\n  0x0004,\n";
+    require(rejected(unclosed), "an array that is never closed was accepted");
+
+    require(rejected(document(Keymap::layerCount, Keymap::keysPerLayer, "0xZZ")), "a code that is not hexadecimal was accepted");
+    require(rejected(document(Keymap::layerCount, Keymap::keysPerLayer, "0x10000")), "a code beyond 16 bits was accepted");
+    require(rejected(document(Keymap::layerCount, Keymap::keysPerLayer, "-1")), "a negative code was accepted");
+    require(rejected(document(Keymap::layerCount, Keymap::keysPerLayer, "\"0x0004\"")), "a quoted code was accepted");
+    require(rejected(document(Keymap::layerCount, Keymap::keysPerLayer, "0x00 04")), "a code with a space inside was accepted");
+}
+
+void tomlAcceptsTheFormsPeopleWrite()
+{
+    Keymap original(hhkbs::keymap::KeyboardLayout::demoProfile());
+    original.setScanCode(0, 0, 0x0000);
+    original.setScanCode(0, 1, 0xFFFF);
+    original.setScanCode(3, 119, 0x5FA4);
+    const auto written = hhkbs::keymap::ProfileSerializer::toToml(original);
+
+    // Line endings from another system.
+    std::string windows;
+    for (const char c : written) windows += c == '\n' ? std::string("\r\n") : std::string(1, c);
+    require(hhkbs::keymap::ProfileSerializer::fromToml(windows).toBytes() == original.toBytes(),
+            "a profile with Windows line endings was not read");
+
+    // The extremes survive.
+    const auto back = hhkbs::keymap::ProfileSerializer::fromToml(written);
+    require(back.scanCode(0, 0) == 0x0000 && back.scanCode(0, 1) == 0xFFFF && back.scanCode(3, 119) == 0x5FA4,
+            "the lowest and highest codes did not round trip");
+
+    // Decimal, upper case prefix and a missing trailing comma are all ordinary ways to write a number list.
+    std::string decimal = "[[layers]]\nscancodes = [";
+    for (std::size_t index = 0; index < Keymap::keysPerLayer; ++index) decimal += (index ? ", " : "") + std::to_string(index % 200);
+    decimal += "]\n";
+    std::string text = decimal + "\n" + document(Keymap::layerCount - 1, Keymap::keysPerLayer, "0X00A0");
+    const auto parsed = hhkbs::keymap::ProfileSerializer::fromToml(text);
+    require(parsed.scanCode(0, 7) == 7 && parsed.scanCode(0, 119) == 119, "decimal codes were not read");
+    require(parsed.scanCode(1, 0) == 0x00A0 && parsed.scanCode(3, 119) == 0x00A0, "an upper case 0X prefix was not read");
+
+    // Other tables and keys around the layers are left alone.
+    const auto withExtras = "title = \"my profile\"\n\n" + document(Keymap::layerCount) + "[other]\nvalue = 1\n";
+    require(!rejected(withExtras), "keys and tables other than the layers should be ignored");
 }
 
 }  // namespace
@@ -267,6 +351,7 @@ int main()
         tomlProfilesRoundTrip();
         tomlCommentsAndStringsAreNotSyntax();
         malformedTomlIsRejected();
+        tomlAcceptsTheFormsPeopleWrite();
         diffListsOnlyTheChangedKeys();
         rebaseMovesTheReferenceNotTheKeys();
     } catch (const std::exception& error) {

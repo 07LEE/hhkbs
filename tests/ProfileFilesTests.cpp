@@ -59,6 +59,17 @@ int main() {
         touch("backup-2026-090000-profile1.toml");
         touch("backup-20260101-090000-profile1.toml.bak");
         touch("notes.toml");
+        // Names that only look like a backup: another case, a wrong width, a longer profile number, a doubled or
+        // missing extension, and the note kept next to a valid backup.
+        touch("Backup-20260101-090000-profile1.toml");
+        touch("backup-20260101-0900000-profile1.toml");
+        touch("backup-202601011-090000-profile1.toml");
+        touch("backup-20260101-090000-profile12.toml");
+        touch("backup-20260101-090000-profile1.toml.toml");
+        touch("backup-20260101-090000-profile1");
+        touch("backup-20260101-090000-profile1.TOML");
+        touch("backup-20260101-090000-profile1.toml.tag");
+        touch("backup-20260101-090000-profile1.toml ");
         std::filesystem::create_directories(backups / "backup-20250101-000000-profile1.toml");
         const auto listed = listBackups(backups);
         if (listed.size() != 3) throw std::runtime_error("Backup list should hold exactly the three valid files");

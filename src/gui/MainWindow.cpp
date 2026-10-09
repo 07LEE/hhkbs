@@ -16,6 +16,7 @@
 #include <cstdlib>
 #include <ctime>
 #include <exception>
+#include <functional>
 #include <unistd.h>
 #include <spawn.h>
 #include <sys/wait.h>
@@ -89,7 +90,7 @@ void MainWindow::beginScan(std::optional<std::uint16_t> target, const bool recon
         message_ = "Checking available HID interfaces...";
     }
     // A profile chosen on the keyboard that is on screen is read from that keyboard, not from whichever answers first.
-    scan_ = std::async(std::launch::async, hhkbs::app::scanKeyboard, target, reconnect, target ? work_.keyboardSerial : std::string());
+    scan_ = std::async(std::launch::async, hhkbs::app::scanKeyboard, std::ref(hhkbs::app::hidrawAccess()), target, reconnect, target ? work_.keyboardSerial : std::string());
 }
 
 void MainWindow::pollScan()
@@ -136,7 +137,7 @@ void MainWindow::beginPadChange(const std::size_t pad, const bool on)
     if (busy() || demo_) return;
     status_ = "Switching pad...";
     message_.clear();
-    pad_ = std::async(std::launch::async, hhkbs::app::changePad, pad, on, work_.keyboardSerial);
+    pad_ = std::async(std::launch::async, hhkbs::app::changePad, std::ref(hhkbs::app::hidrawAccess()), pad, on, work_.keyboardSerial);
 }
 
 void MainWindow::pollPadChange()
@@ -189,7 +190,7 @@ void MainWindow::beginApply()
     if (jobs.empty()) return;
     status_ = "Applying...";
     message_ = "Writing to the keyboard. Do not unplug it.";
-    apply_ = std::async(std::launch::async, hhkbs::app::applyProfiles, std::move(jobs), work_.keyboardSerial);
+    apply_ = std::async(std::launch::async, hhkbs::app::applyProfiles, std::ref(hhkbs::app::hidrawAccess()), std::move(jobs), work_.keyboardSerial);
 }
 
 void MainWindow::pollApply()
@@ -211,7 +212,7 @@ void MainWindow::beginPreview()
     if (busy() || demo_ || bluetooth_) return;
     const auto profiles = work_.editedProfiles();
     if (profiles.empty()) { previewDone_ = true; return; }
-    preview_ = std::async(std::launch::async, hhkbs::app::readProfiles, profiles, work_.keyboardSerial);
+    preview_ = std::async(std::launch::async, hhkbs::app::readProfiles, std::ref(hhkbs::app::hidrawAccess()), profiles, work_.keyboardSerial);
 }
 
 void MainWindow::pollPreview()

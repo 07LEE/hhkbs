@@ -1,8 +1,11 @@
 #pragma once
+#include "device/DeviceInfo.h"
+#include "device/Transport.h"
 #include <array>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
@@ -45,17 +48,32 @@ struct ProfileRead {
 
 struct PreviewResult { std::vector<ProfileRead> profiles; };
 
+// How the tasks reach a keyboard: which interfaces are there, and a connection to one of them. The real one opens
+// the hidraw nodes; tests supply a fake keyboard.
+class KeyboardAccess {
+public:
+    virtual ~KeyboardAccess() = default;
+    [[nodiscard]] virtual std::vector<device::DeviceInfo> interfaces() = 0;
+    [[nodiscard]] virtual std::unique_ptr<device::Transport> open(const device::DeviceInfo& interface) = 0;
+};
+
+// The keyboard attached to this computer.
+[[nodiscard]] KeyboardAccess& hidrawAccess();
+
 // Looks for a keyboard. With `reconnect` it only finds the connection again; otherwise it reads `target` (or the
 // keyboard's current profile). With a `serial`, only the keyboard that carries it is read.
-[[nodiscard]] ScanResult scanKeyboard(std::optional<std::uint16_t> target, bool reconnect, const std::string& serial);
+[[nodiscard]] ScanResult scanKeyboard(KeyboardAccess& access, std::optional<std::uint16_t> target, bool reconnect,
+                                      const std::string& serial);
 
-[[nodiscard]] PadResult changePad(std::size_t pad, bool on, const std::string& serial);
+[[nodiscard]] PadResult changePad(KeyboardAccess& access, std::size_t pad, bool on, const std::string& serial);
 
 // Writes each profile (0-3) of `jobs` to the keyboard with `serial`, over USB, keeping a backup of what it held.
-[[nodiscard]] ApplyResult applyProfiles(const std::vector<std::pair<std::uint16_t, std::vector<std::uint8_t>>>& jobs,
+[[nodiscard]] ApplyResult applyProfiles(KeyboardAccess& access,
+                                        const std::vector<std::pair<std::uint16_t, std::vector<std::uint8_t>>>& jobs,
                                         const std::string& serial);
 
 // Reads the given profiles from the keyboard with `serial`, over USB.
-[[nodiscard]] PreviewResult readProfiles(const std::vector<std::uint16_t>& profiles, const std::string& serial);
+[[nodiscard]] PreviewResult readProfiles(KeyboardAccess& access, const std::vector<std::uint16_t>& profiles,
+                                         const std::string& serial);
 
 }  // namespace hhkbs::app

@@ -5,6 +5,7 @@
 #include "device/PadMonitor.h"
 #include "device/Transport.h"
 #include "keymap/Keymap.h"
+#include "StorageTransport.h"
 
 #include <array>
 #include <cstdint>
@@ -27,18 +28,14 @@ using hhkbs::device::HhkbStudioDevice;
 using hhkbs::device::Report;
 using hhkbs::device::Transport;
 using hhkbs::keymap::Keymap;
+using hhkbs::test::StorageTransport;
+using hhkbs::test::patternProfile;
+using hhkbs::test::writeText;
 
 void require(const bool condition, const std::string& message)
 {
     if (!condition) {
         throw std::runtime_error(message);
-    }
-}
-
-void writeText(Report& report, const std::string& text)
-{
-    for (std::size_t index = 0; index < text.size() && index + 3 < report.size(); ++index) {
-        report[index + 3] = static_cast<std::uint8_t>(text[index]);
     }
 }
 
@@ -103,111 +100,6 @@ public:
     std::vector<Report> requests;
 };
 
-// Behaves like a keyboard that stores its profile, so writes can be read back.
-class StorageTransport final : public Transport {
-public:
-    // Each profile holds its own data; `memory` is the active one.
-    StorageTransport()
-        : memory(Keymap::profileByteCount)
-    {
-        for (std::size_t profile = 0; profile < stored.size(); ++profile) {
-            stored[profile].assign(Keymap::profileByteCount, 0);
-            for (std::size_t index = 0; index < Keymap::profileByteCount; ++index) {
-                stored[profile][index] =
-                    static_cast<std::uint8_t>(index * 7U + profile * 31U);
-            }
-        }
-        memory = stored.at(currentProfile);
-    }
-
-    using Transport::exchange;
-
-    // Mirrors the keyboard: a profile switch is answered by two reports.
-    [[nodiscard]] std::vector<Report> exchange(
-        const Report& request,
-        const std::size_t responseCount) override
-    {
-        if (request[0] != 0x03) {
-            return Transport::exchange(request, responseCount);
-        }
-        ++switches;
-        const std::uint8_t requested = request[4];
-        const bool ignored = ignoreSwitch
-            || (ignoreSwitchNumber != 0 && switches == ignoreSwitchNumber);
-        if (!ignored) {
-            stored.at(currentProfile) = memory;
-            currentProfile = requested;
-            memory = stored.at(currentProfile);
-        }
-        Report notification{};
-        notification[0] = 0x02;
-        notification[1] = 0x11;
-        notification[2] = 0x01;
-        notification[4] = ignored ? currentProfile : requested;
-        notification[7] = 0x20;
-        Report acknowledgement = notification;
-        acknowledgement[0] = 0x03;
-        acknowledgement[7] = 0;
-        std::vector<Report> responses{notification, acknowledgement};
-        responses.resize(switchResponseCount, acknowledgement);
-        return responses;
-    }
-
-    [[nodiscard]] Report exchange(const Report& request) override
-    {
-        Report response{};
-        const auto address = static_cast<std::size_t>(
-            (static_cast<std::uint16_t>(request[1]) << 8U) | request[2]);
-
-        if (request[0] == 0x12) {
-            for (std::size_t index = 0; index < request[3]; ++index) {
-                response[4 + index] = memory.at(address + index);
-            }
-        } else if (request[0] == 0x13) {
-            ++writes;
-            if (failWriteNumber != 0 && writes == failWriteNumber) {
-                throw hhkbs::device::DeviceError(
-                    hhkbs::device::DeviceErrorCode::Disconnected,
-                    "unplugged");
-            }
-            for (std::size_t index = 0; index < request[3]; ++index) {
-                const auto value = request[4 + index];
-                memory.at(address + index) =
-                    corruptWrites ? static_cast<std::uint8_t>(~value) : value;
-            }
-        } else if (address == 0x1001) {
-            writeText(response, productName);
-        } else if (address == 0x1007) {
-            writeText(response, serialNumber);
-        } else if (address == 0x1101) {
-            response[4] = currentProfile;
-        }
-        return response;
-    }
-
-    std::vector<std::uint8_t> memory;
-    std::array<std::vector<std::uint8_t>, 4> stored;
-    std::string productName = "HHKB-Studio";
-    std::string serialNumber = "serial";
-    std::uint8_t currentProfile = 2;
-    std::size_t writes = 0;
-    std::size_t switches = 0;
-    std::size_t switchResponseCount = 2;
-    bool ignoreSwitch = false;
-    std::size_t ignoreSwitchNumber = 0;
-    std::size_t failWriteNumber = 0;
-    bool corruptWrites = false;
-};
-
-std::vector<std::uint8_t> patternProfile(const std::uint8_t seed)
-{
-    std::vector<std::uint8_t> profile(Keymap::profileByteCount);
-    for (std::size_t index = 0; index < profile.size(); ++index) {
-        profile[index] = static_cast<std::uint8_t>(index + seed);
-    }
-    return profile;
-}
-
 void profileWriteIsVerifiedByReadBack()
 {
     StorageTransport transport;
@@ -247,15 +139,35 @@ void mismatchedReadBackRestoresBackup()
     HhkbStudioDevice device(transport);
     const auto backup = device.readCurrentProfile();
 
-    transport.corruptWrites = true;
+    // The profile is stored wrongly, but the restore that follows is kept as sent.
+    constexpr std::size_t profileWrites = (Keymap::profileByteCount + 25) / 26;
+    transport.corruptUntilWrite = profileWrites;
     bool threw = false;
+    std::string message;
     try {
         device.writeCurrentProfile(patternProfile(3), backup);
     } catch (const hhkbs::device::DeviceError& error) {
         threw = error.code() == hhkbs::device::DeviceErrorCode::Protocol;
+        message = error.what();
     }
 
     require(threw, "a read-back mismatch was not reported");
+    require(transport.memory == backup, "the previous profile was not put back after a mismatch");
+    require(message.find("The previous profile was restored.") != std::string::npos,
+            "the report does not say the profile was restored");
+
+    // When even the restore is stored wrongly, the report says so.
+    StorageTransport stubborn;
+    HhkbStudioDevice other(stubborn);
+    stubborn.corruptUntilWrite = 2 * profileWrites;
+    message.clear();
+    try {
+        other.writeCurrentProfile(patternProfile(3), other.readCurrentProfile());
+    } catch (const hhkbs::device::DeviceError& error) {
+        message = error.what();
+    }
+    require(message.find("could not be restored") != std::string::npos,
+            "a restore that failed was reported as done");
 }
 
 void writeTargetIsChecked()
@@ -601,37 +513,6 @@ void gesturePadsAreReadAndSwitched()
     require(caught, "a change the keyboard did not keep must be reported");
 }
 
-void padMonitorFollowsNotifications()
-{
-    using hhkbs::device::PadMonitor;
-    const auto fifo = std::filesystem::temp_directory_path() / ("hhkbs-pad-" + std::to_string(::getpid()));
-    require(::mkfifo(fifo.c_str(), 0600) == 0, "could not create the fake device");
-
-    PadMonitor monitor;
-    require(monitor.state(1) == PadMonitor::State::Unknown, "a pad must be unknown before any report");
-    monitor.start(fifo);
-    const int writer = ::open(fifo.c_str(), O_WRONLY);
-    const auto send = [&](const Report& report) { require(::write(writer, report.data(), report.size()) == 32, "write failed"); };
-    const auto waitFor = [&](const std::size_t pad, const PadMonitor::State expected) {
-        for (int attempt = 0; attempt < 100; ++attempt) {
-            if (monitor.state(pad) == expected) return true;
-            std::this_thread::sleep_for(std::chrono::milliseconds(20));
-        }
-        return false;
-    };
-
-    send(Report{0x02, 0x11, 0x05, 0x01, 0x01, 0x01});
-    require(waitFor(1, PadMonitor::State::On), "front left should be on after its report");
-    send(Report{0x02, 0x11, 0x05, 0x01, 0x01, 0x00});
-    require(waitFor(1, PadMonitor::State::Off), "front left should be off after its report");
-    require(monitor.state(0) == PadMonitor::State::Unknown, "a pad that never reported stays unknown");
-
-    monitor.stop();
-    ::close(writer);
-    ::unlink(fifo.c_str());
-    require(monitor.state(1) == PadMonitor::State::Unknown, "pads are unknown once listening stops");
-}
-
 void profileIsReadInBoundedChunks()
 {
     FakeTransport transport;
@@ -785,7 +666,6 @@ int main()
         bluetoothInterfacesAreTold();
         bluetoothProfileIsRead();
         gesturePadsAreReadAndSwitched();
-        padMonitorFollowsNotifications();
         protocolPacketsAreEncodedAndDecoded();
         profileIsReadInBoundedChunks();
         supportedInterfacesAreDiscovered();

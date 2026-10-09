@@ -9,6 +9,7 @@
 namespace {
 
 using hhkbs::app::ProfileWorkspace;
+using hhkbs::keymap::Keymap;
 
 void require(const bool condition, const std::string& message)
 {
@@ -54,6 +55,28 @@ void editsSurviveLeavingAndReturning()
     require(work.selected == 0 && work.keymap.scanCode(0, 3) == 0x0004, "the edit was lost on returning");
     require(work.keyboardBytes[0] == changed, "the keyboard's content was not brought up to date");
     require(work.unsavedList() == "Profile 1 (on screen)", "the profile on screen was not listed");
+    // The keys stay as the user had them; only what they are compared with is the keyboard's new content. So the key
+    // the keyboard changed meanwhile now shows as different from the keyboard, next to the user's own edit.
+    require(work.keymap.scanCode(0, 0) == Keymap(bytes).scanCode(0, 0), "a key the user did not touch was changed");
+    require(work.keymap.isKeyModified(0, 0), "a key differing from the keyboard's new content was not marked");
+    require(work.keymap.isKeyModified(0, 3), "the user's edit lost its mark");
+}
+
+void readingTheProfileOnScreenReplacesIt()
+{
+    ProfileWorkspace work;
+    const auto bytes = keyboardProfile();
+    work.adoptKeyboardProfile(0, bytes, "serial");
+    work.keymap.setScanCode(0, 3, 0x0004);
+    require(work.unsaved(), "an edit was not noticed");
+
+    auto changed = bytes;
+    changed[0] ^= 0x01;
+    work.adoptKeyboardProfile(0, changed, "serial");  // the user chose to read it again, edits and all
+
+    require(work.keymap.toBytes() == changed && !work.unsaved() && !work.anyUnsaved(),
+            "reading the profile on screen should show the keyboard's content as it is");
+    require(!work.keymap.isModified(), "a profile just read counted as edited");
 }
 
 void aWrittenProfileStopsCountingAsChanged()
@@ -90,11 +113,29 @@ void aFileOrBackupIsComparedWithTheKeyboard()
     ProfileWorkspace work;
     const auto bytes = keyboardProfile();
     work.adoptKeyboardProfile(0, bytes, "serial");
-    hhkbs::keymap::Keymap other(bytes);
-    other.setScanCode(0, 7, 0x0010);
-    work.keymap = other;
+    // The keyboard now holds a profile that differs at key 7; the file differs from the profile it was saved from
+    // at keys 7 and 9.
+    hhkbs::keymap::Keymap held(bytes);
+    held.setScanCode(0, 7, 0x0010);
+    work.keyboardBytes[0] = held.toBytes();
+    hhkbs::keymap::Keymap file(bytes);
+    file.setScanCode(0, 7, 0x0010);
+    file.setScanCode(0, 9, 0x0022);
+    work.keymap = file;
+    require(work.keymap.isKeyModified(0, 7) && work.keymap.isKeyModified(0, 9), "the file should differ from its own reference");
+
     work.useKeyboardAsReference();
-    require(work.keymap.isKeyModified(0, 7), "the key differing from the keyboard was not marked");
+
+    require(!work.keymap.isKeyModified(0, 7), "a key equal to the keyboard's was still marked");
+    require(work.keymap.isKeyModified(0, 9), "a key differing from the keyboard's was not marked");
+    require(work.keymap.scanCode(0, 7) == 0x0010 && work.keymap.scanCode(0, 9) == 0x0022, "the keys themselves changed");
+
+    // With nothing read from the keyboard for that profile, the content is left as it is.
+    ProfileWorkspace unread;
+    unread.keymap = file;
+    unread.loaded = true;
+    unread.useKeyboardAsReference();
+    require(unread.keymap.isKeyModified(0, 7), "content was compared with a keyboard that was never read");
 }
 
 }  // namespace
@@ -104,6 +145,7 @@ int main()
     try {
         readingAProfileShowsItClean();
         editsSurviveLeavingAndReturning();
+        readingTheProfileOnScreenReplacesIt();
         aWrittenProfileStopsCountingAsChanged();
         theFirstUnsavedProfileComesForward();
         aFileOrBackupIsComparedWithTheKeyboard();

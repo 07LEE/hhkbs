@@ -15,15 +15,15 @@ namespace {
 
 // With usbOnly, a Bluetooth connection is passed over: writing a profile is only done over the cable.
 // With a serial number, only the keyboard that carries it is opened, so a second HHKB Studio is never mistaken for it.
-std::unique_ptr<hhkbs::device::HidrawTransport> openStudio(const bool usbOnly = false, const std::string& serial = {})
+std::unique_ptr<hhkbs::device::Transport> openStudio(KeyboardAccess& access, const bool usbOnly, const std::string& serial)
 {
     bool skippedBluetooth = false;
     bool otherKeyboard = false;
-    for (const auto& item : hhkbs::device::DeviceDiscovery::findHhkbStudioInterfaces()) {
+    for (const auto& item : access.interfaces()) {
         if (!item.canReadWrite) continue;
         if (usbOnly && item.bluetooth) { skippedBluetooth = true; continue; }
         try {
-            auto transport = std::make_unique<hhkbs::device::HidrawTransport>(item.path);
+            auto transport = access.open(item);
             hhkbs::device::HhkbStudioDevice device(*transport);
             if (device.readProductName() != "HHKB-Studio") continue;
             if (serial.empty() || device.readSerialNumber() == serial) return transport;
@@ -35,21 +35,40 @@ std::unique_ptr<hhkbs::device::HidrawTransport> openStudio(const bool usbOnly = 
     throw std::runtime_error("No writable HHKB Studio was found. Check the connection and udev rules.");
 }
 
+class HidrawAccess final : public KeyboardAccess {
+public:
+    std::vector<hhkbs::device::DeviceInfo> interfaces() override
+    {
+        return hhkbs::device::DeviceDiscovery::findHhkbStudioInterfaces();
+    }
+    std::unique_ptr<hhkbs::device::Transport> open(const hhkbs::device::DeviceInfo& interface) override
+    {
+        return std::make_unique<hhkbs::device::HidrawTransport>(interface.path);
+    }
+};
+
 }  // namespace
 
-ScanResult scanKeyboard(const std::optional<std::uint16_t> target, const bool reconnect, const std::string& serial)
+KeyboardAccess& hidrawAccess()
+{
+    static HidrawAccess access;
+    return access;
+}
+
+ScanResult scanKeyboard(KeyboardAccess& access, const std::optional<std::uint16_t> target, const bool reconnect,
+                        const std::string& serial)
 {
     ScanResult result{"No device", "Connect an HHKB Studio, import a TOML profile, or start with --demo.", {}, std::nullopt, {}, false, {}, {}};
     try {
-        const auto devices = hhkbs::device::DeviceDiscovery::findHhkbStudioInterfaces();
+        const auto devices = access.interfaces();
         bool permission = false;
         bool otherKeyboard = false;  // a keyboard answered, but not the one that was read
         std::string lastError;
         for (const auto& item : devices) {
             if (!item.canReadWrite) { permission = true; continue; }
             try {
-                hhkbs::device::HidrawTransport transport(item.path);
-                hhkbs::device::HhkbStudioDevice device(transport);
+                const auto transport = access.open(item);
+                hhkbs::device::HhkbStudioDevice device(*transport);
                 if (device.readProductName() != "HHKB-Studio") continue;
                 if (reconnect) {
                     // Only bring the connection back; the profile is read when the user asks for it.
@@ -96,19 +115,20 @@ ScanResult scanKeyboard(const std::optional<std::uint16_t> target, const bool re
     return result;
 }
 
-PadResult changePad(const std::size_t pad, const bool on, const std::string& serial)
+PadResult changePad(KeyboardAccess& access, const std::size_t pad, const bool on, const std::string& serial)
 {
     PadResult result{false, pad, on, {}};
     try {
-        auto transport = openStudio(false, serial);
+        auto transport = openStudio(access, false, serial);
         hhkbs::device::HhkbStudioDevice(*transport).setPadState(pad, on);
         result.ok = true;
     } catch (const std::exception& error) { result.message = error.what(); }
     return result;
 }
 
-ApplyResult applyProfiles(const std::vector<std::pair<std::uint16_t, std::vector<std::uint8_t>>>& jobs,
-                         const std::string& serial)
+ApplyResult applyProfiles(KeyboardAccess& access,
+                          const std::vector<std::pair<std::uint16_t, std::vector<std::uint8_t>>>& jobs,
+                          const std::string& serial)
 {
     ApplyResult result;
     const auto listed = [](const std::vector<std::uint16_t>& profiles) {
@@ -118,7 +138,7 @@ ApplyResult applyProfiles(const std::vector<std::pair<std::uint16_t, std::vector
     };
     std::string backups;
     try {
-        auto transport = openStudio(true, serial);
+        auto transport = openStudio(access, true, serial);
         hhkbs::device::HhkbStudioDevice device(*transport);
         for (const auto& [profile, bytes] : jobs) {
             std::filesystem::path path;
@@ -159,12 +179,13 @@ ApplyResult applyProfiles(const std::vector<std::pair<std::uint16_t, std::vector
     return result;
 }
 
-PreviewResult readProfiles(const std::vector<std::uint16_t>& profiles, const std::string& serial)
+PreviewResult readProfiles(KeyboardAccess& access, const std::vector<std::uint16_t>& profiles,
+                           const std::string& serial)
 {
     PreviewResult result;
-    std::unique_ptr<hhkbs::device::HidrawTransport> transport;
+    std::unique_ptr<hhkbs::device::Transport> transport;
     std::string failure;
-    try { transport = openStudio(true, serial); } catch (const std::exception& error) { failure = error.what(); }
+    try { transport = openStudio(access, true, serial); } catch (const std::exception& error) { failure = error.what(); }
     for (const auto profile : profiles) {
         ProfileRead read{profile, {}, failure};
         if (failure.empty()) {
