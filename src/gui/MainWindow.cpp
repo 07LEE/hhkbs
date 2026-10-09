@@ -81,7 +81,7 @@ MainWindow::MainWindow(bool demoMode)
     } else beginScan();
 }
 
-void MainWindow::beginScan(std::optional<std::uint16_t> target, const bool reconnect)
+void MainWindow::beginScan(std::optional<std::uint16_t> target, const bool reconnect, const bool anyKeyboard)
 {
     if (scan_.valid()) return;
     reconnectScan_ = reconnect;
@@ -90,7 +90,9 @@ void MainWindow::beginScan(std::optional<std::uint16_t> target, const bool recon
         message_ = "Checking available HID interfaces...";
     }
     // A profile chosen on the keyboard that is on screen is read from that keyboard, not from whichever answers first.
-    scan_ = std::async(std::launch::async, hhkbs::app::scanKeyboard, std::ref(hhkbs::app::hidrawAccess()), target, reconnect, target ? work_.keyboardSerial : std::string());
+    // Reading again on request takes whichever keyboard answers, since that is how a different one is picked up.
+    const std::string serial = target && !anyKeyboard ? work_.keyboardSerial : std::string();
+    scan_ = std::async(std::launch::async, hhkbs::app::scanKeyboard, std::ref(hhkbs::app::hidrawAccess()), target, reconnect, serial);
 }
 
 void MainWindow::pollScan()
@@ -113,6 +115,13 @@ void MainWindow::pollScan()
             wasListening_ = true;
             for (std::size_t pad = 0; pad < result.pads.size(); ++pad)
                 if (result.pads[pad]) pads_.set(pad, *result.pads[pad]);
+            return;
+        }
+        if (!result.bytes.empty() && work_.keyboardChanged(result.serial) && work_.stashedUnsaved()) {
+            // The work put aside belongs to the keyboard that was read before; showing the new one would lose it.
+            status_ = "Different keyboard";
+            message_ = "Another keyboard is connected, but " + work_.stashedUnsavedList() +
+                       " hold unsaved work from the previous one. Save or discard it, then read again.";
             return;
         }
         status_ = result.status;
@@ -249,6 +258,12 @@ void MainWindow::selectProfile(std::uint16_t profile)
         message_.clear();
         return;
     }
+    if (work_.readWouldDiscard(profile)) {
+        // What is on screen did not come from the keyboard, so reading replaces it: unsaved edits get their chance.
+        pendingProfile_ = profile;
+        request(Action::SelectProfile);
+        return;
+    }
     beginScan(profile);
 }
 void MainWindow::request(Action action)
@@ -257,20 +272,30 @@ void MainWindow::request(Action action)
     if (action == Action::Close ? work_.anyUnsaved() : work_.unsaved()) {
         if (action == Action::Close && work_.showFirstUnsaved()) message_.clear();
         pending_ = action;
+        dialogError_.clear();
         dialog_ = Dialog::Unsaved;
     }
     else perform(action);
 }
 void MainWindow::perform(Action action)
 {
-    if (action == Action::Read) beginScan();
+    // Reading again with unsaved edits left on screen (they were not saved, and the choice was to go on) shows the
+    // same profile from the keyboard; otherwise it follows the profile the keyboard is on.
+    if (action == Action::Read) beginScan(work_.unsaved() ? work_.selected : std::nullopt, false, true);
+    else if (action == Action::SelectProfile) {
+        if (const auto profile = std::exchange(pendingProfile_, std::nullopt)) beginScan(*profile);
+    }
+    else if (action == Action::Discard) {
+        work_.keymap.reset();
+        work_.savedBytes = work_.keymap.toBytes();  // it is the keyboard's content again, so there is nothing left to lose
+    }
     else if (action == Action::LoadFile) {
-        if (!importFile(std::exchange(pendingFile_, {}))) message_ = dialogError_;
+        if (!importFile(std::exchange(pendingFile_, {}))) { message_ = dialogError_; dialogError_.clear(); }
     }
     else if (action == Action::LoadBackup && pendingBackup_) {
         const auto entry = *pendingBackup_;
         pendingBackup_.reset();
-        if (!loadBackup(entry)) message_ = dialogError_;
+        if (!loadBackup(entry)) { message_ = dialogError_; dialogError_.clear(); }
     }
     else if (action == Action::Close) {
         // After saving one profile, the next one with unsaved work is asked about, until none is left.
@@ -547,6 +572,7 @@ void MainWindow::drawDeleteBackup()
 void MainWindow::cancelDialog()
 {
     pending_ = Action::None;
+    pendingProfile_.reset();
     finishDialog();
 }
 void MainWindow::finishDialog()
@@ -1052,10 +1078,7 @@ void MainWindow::draw()
     if (ImGui::Button("Backups")) openBackups();
     ImGui::SameLine();
     ImGui::BeginDisabled(!work_.loaded || !work_.keymap.isModified());
-    if (ImGui::Button("Discard changes")) {
-        work_.keymap.reset();
-        work_.savedBytes = work_.keymap.toBytes();  // it is the keyboard's content again, so there is nothing left to lose
-    }
+    if (ImGui::Button("Discard changes")) request(Action::Discard);
     ImGui::SetItemTooltip("Put the profile on screen back to what the keyboard holds");
     ImGui::EndDisabled();
     ImGui::EndDisabled();

@@ -24,7 +24,7 @@ public:
     void dropFiles(const std::vector<std::filesystem::path>& paths);
     [[nodiscard]] bool shouldClose() const { return close_; }
 private:
-    enum class Action { None, Read, LoadFile, LoadBackup, Close };
+    enum class Action { None, Read, LoadFile, LoadBackup, SelectProfile, Discard, Close };
     enum class Dialog { None, Assign, Unsaved, Save, Defaults, Apply, Backups, CleanBackups };
     enum class BackupTab { Import, Restore, Manage };
     using ScanResult = hhkbs::app::ScanResult;
@@ -38,7 +38,7 @@ private:
         std::string error;
         std::vector<hhkbs::keymap::KeyChange> changes;
     };
-    void beginScan(std::optional<std::uint16_t> profile = std::nullopt, bool reconnect = false);
+    void beginScan(std::optional<std::uint16_t> profile = std::nullopt, bool reconnect = false, bool anyKeyboard = false);
     void selectProfile(std::uint16_t profile);
     void pollScan();
     void beginPadChange(std::size_t pad, bool on);
@@ -75,6 +75,7 @@ private:
 
     hhkbs::app::BackupList backupList_{hhkbs::keymap::backupDirectory()};  // the Backups window's list and tag box
     std::optional<hhkbs::keymap::BackupEntry> pendingBackup_;
+    std::optional<std::uint16_t> pendingProfile_;  // the profile to read once unsaved edits have been dealt with
     std::optional<BackupTab> selectTab_;  // the Backups tab to come up on
     bool confirmDelete_ = false;  // the delete confirmation is open over the Backups window
     std::future<ScanResult> scan_;

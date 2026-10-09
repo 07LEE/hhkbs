@@ -108,6 +108,63 @@ void theFirstUnsavedProfileComesForward()
     require(!work.showFirstUnsaved(), "nothing should move when the shown profile has unsaved work");
 }
 
+void readingCanDiscardOnlyWhatDidNotComeFromTheKeyboardOrIsTheSameProfile()
+{
+    ProfileWorkspace work;
+    require(!work.readWouldDiscard(1), "nothing on screen cannot be discarded");
+
+    // Content from a file or backup: nothing says which profile it is, so a read replaces it.
+    work.keymap = Keymap(keyboardProfile());
+    work.loaded = true;
+    work.keymap.setScanCode(0, 3, 0x0004);
+    require(work.unsaved() && work.readWouldDiscard(1), "edits on content that came from a file were not protected");
+    work.savedBytes = work.keymap.toBytes();
+    require(!work.readWouldDiscard(1), "saved content should not need a question");
+
+    // Content that came from the keyboard: reading another profile puts it aside, the same one replaces it.
+    ProfileWorkspace read;
+    read.adoptKeyboardProfile(0, keyboardProfile(), "serial");
+    read.keymap.setScanCode(0, 3, 0x0004);
+    require(!read.readWouldDiscard(1), "reading another profile loses nothing, so it should not ask");
+    require(read.readWouldDiscard(0), "reading the profile on screen again replaces its edits");
+}
+
+void aDifferentKeyboardReplacesEverythingReadFromTheFirst()
+{
+    ProfileWorkspace work;
+    const auto bytes = keyboardProfile();
+    require(!work.keyboardChanged("A"), "the first keyboard cannot be a change");
+    work.adoptKeyboardProfile(0, bytes, "A");
+    require(!work.keyboardChanged("A") && work.keyboardChanged("B"), "a different serial number was not noticed");
+
+    work.adoptKeyboardProfile(1, bytes, "A");  // profile 1 on screen, profile 1 (index 0) put aside clean
+    require(work.stashed[0] && !work.keyboardBytes[0].empty(), "the first keyboard's profile was not kept");
+    work.adoptKeyboardProfile(0, hhkbs::keymap::Keymap().toBytes(), "B");
+
+    require(work.keyboardSerial == "B", "the new keyboard was not remembered");
+    require(!work.stashed[1] && !work.stashed[0], "work put aside for the first keyboard was kept for the second");
+    require(work.keyboardBytes[1].empty() && !work.keyboardBytes[0].empty(), "what the first keyboard held was kept");
+    require(work.selected == 0 && work.keymap.toBytes() == hhkbs::keymap::Keymap().toBytes(), "the new profile is not on screen");
+    require(!work.anyUnsaved(), "a profile just read from the new keyboard counted as unsaved");
+}
+
+void unsavedWorkPutAsideIsListed()
+{
+    ProfileWorkspace work;
+    const auto bytes = keyboardProfile();
+    work.adoptKeyboardProfile(0, bytes, "A");
+    require(!work.stashedUnsaved() && work.stashedUnsavedList().empty(), "nothing is put aside yet");
+
+    work.keymap.setScanCode(0, 3, 0x0004);
+    work.adoptKeyboardProfile(2, bytes, "A");
+    require(work.stashedUnsaved() && work.stashedUnsavedList() == "Profile 1", "the profile put aside was not listed");
+    work.keymap.setScanCode(0, 5, 0x0009);
+    require(work.stashedUnsavedList() == "Profile 1", "the profile on screen is not one put aside");
+
+    work.adoptKeyboardProfile(3, bytes, "A");
+    require(work.stashedUnsavedList() == "Profile 1, Profile 3", "both profiles put aside were not listed in order");
+}
+
 void aFileOrBackupIsComparedWithTheKeyboard()
 {
     ProfileWorkspace work;
@@ -148,6 +205,9 @@ int main()
         readingTheProfileOnScreenReplacesIt();
         aWrittenProfileStopsCountingAsChanged();
         theFirstUnsavedProfileComesForward();
+        readingCanDiscardOnlyWhatDidNotComeFromTheKeyboardOrIsTheSameProfile();
+        aDifferentKeyboardReplacesEverythingReadFromTheFirst();
+        unsavedWorkPutAsideIsListed();
         aFileOrBackupIsComparedWithTheKeyboard();
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
