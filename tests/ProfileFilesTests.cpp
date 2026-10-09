@@ -232,6 +232,30 @@ int main() {
             }
         }
 
+        // A symbolic link with a backup's name: one that leads nowhere is not a backup, and one that leads to a file is
+        // removed as itself, never the file it points to.
+        {
+            const auto folder = directory / "links";
+            std::filesystem::create_directories(folder);
+            const auto outside = directory / "keep-me.toml";
+            std::ofstream(outside) << "x";
+            const auto dangling = folder / "backup-20260103-090000-profile1.toml";
+            const auto pointing = folder / "backup-20260104-090000-profile1.toml";
+            std::filesystem::create_symlink(directory / "no-such-file", dangling);
+            std::filesystem::create_symlink(outside, pointing);
+
+            const auto listedLinks = listBackups(folder);
+            if (listedLinks.size() != 1 || listedLinks[0].path != pointing)
+                throw std::runtime_error("Only the link that leads to a file can be a backup");
+            bool refused = false;
+            try { setBackupTag(folder, BackupEntry{dangling, 0, {}}, "note"); } catch (const std::invalid_argument&) { refused = true; }
+            if (!refused || std::filesystem::exists(tagPathFor(dangling))) throw std::runtime_error("A note was put on a link that leads nowhere");
+
+            deleteBackup(folder, listedLinks[0]);
+            if (std::filesystem::is_symlink(pointing) || !std::filesystem::exists(outside))
+                throw std::runtime_error("Deleting a backup that is a link must remove the link and leave the file it points to");
+        }
+
         // Where backups go: only absolute locations count, and what is made is for the owner alone.
         {
             const auto remember = [](const char* name) { const char* value = std::getenv(name); return value ? std::string(value) : std::string(); };
