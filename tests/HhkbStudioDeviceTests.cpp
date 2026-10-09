@@ -170,6 +170,58 @@ void mismatchedReadBackRestoresBackup()
             "a restore that failed was reported as done");
 }
 
+void readBackFailureRestoresTheBackup()
+{
+    StorageTransport transport;
+    HhkbStudioDevice device(transport);
+    const auto backup = device.readCurrentProfile();
+    transport.failNextReadAfterWrite = true;
+
+    std::string message;
+    bool inputOutput = false;
+    try {
+        device.writeCurrentProfile(patternProfile(3), backup);
+    } catch (const hhkbs::device::DeviceError& error) {
+        message = error.what();
+        inputOutput = error.code() == hhkbs::device::DeviceErrorCode::InputOutput;
+    }
+
+    require(inputOutput, "a read-back that failed was not reported as a failure of the keyboard");
+    require(transport.memory == backup, "the previous profile was not put back when the check could not be done");
+    require(message.find("could not be checked") != std::string::npos && message.find("was restored") != std::string::npos,
+            "the report does not say the write could not be checked and was undone");
+
+    // When the check keeps failing, the restore cannot be confirmed either, and the report says so.
+    StorageTransport stubborn;
+    HhkbStudioDevice other(stubborn);
+    stubborn.failReadsAfterWrite = true;
+    message.clear();
+    try {
+        other.writeCurrentProfile(patternProfile(3), other.readCurrentProfile());
+    } catch (const hhkbs::device::DeviceError& error) {
+        message = error.what();
+    }
+    require(message.find("could not be restored") != std::string::npos && message.find("saved backup") != std::string::npos,
+            "an unconfirmed restore was reported as done, or the backup was not mentioned");
+}
+
+void anActiveProfileOutOfRangeIsRejected()
+{
+    StorageTransport transport;
+    transport.currentProfile = 7;
+    HhkbStudioDevice device(transport);
+
+    bool threw = false;
+    try {
+        static_cast<void>(device.activeProfile());
+    } catch (const hhkbs::device::DeviceError& error) {
+        threw = error.code() == hhkbs::device::DeviceErrorCode::Protocol;
+    }
+    require(threw, "a profile number the keyboard does not have was accepted");
+    transport.currentProfile = 3;
+    require(device.activeProfile() == 3, "the last profile was refused");
+}
+
 void writeTargetIsChecked()
 {
     StorageTransport wrongProfile;
@@ -536,6 +588,35 @@ void profileIsReadInBoundedChunks()
     require(transport.requests.back()[3] == 24, "final chunk length is incorrect");
 }
 
+void onlyConfigurationInterfacesAreKept()
+{
+    const auto root = std::filesystem::temp_directory_path()
+        / ("hhkbs-interfaces-" + std::to_string(::getpid()));
+    std::filesystem::remove_all(root);
+    const auto interface = [&](const std::string& name, const std::vector<std::uint8_t>* descriptor) {
+        std::filesystem::create_directories(root / name / "device");
+        std::ofstream(root / name / "device" / "uevent") << "HID_ID=0003:000004FE:00000016\nHID_NAME=HHKB-Studio\n";
+        if (descriptor) {
+            std::ofstream file(root / name / "device" / "report_descriptor", std::ios::binary);
+            file.write(reinterpret_cast<const char*>(descriptor->data()), static_cast<std::streamsize>(descriptor->size()));
+        }
+    };
+    const std::vector<std::uint8_t> keys{0x05, 0x01, 0x09, 0x06, 0xA1, 0x01, 0x85, 0x01, 0xC0};
+    const std::vector<std::uint8_t> settings{0x06, 0x60, 0xFF, 0x09, 0x61, 0xA1, 0x01, 0xC0};
+    const std::vector<std::uint8_t> otherVendor{0x06, 0x31, 0xFF, 0x09, 0x74, 0xA1, 0x01, 0xC0};
+    interface("hidraw-a-keys", &keys);
+    interface("hidraw-b-settings", &settings);
+    interface("hidraw-c-other", &otherVendor);
+    interface("hidraw-d-unreadable", nullptr);
+
+    const auto interfaces = hhkbs::device::DeviceDiscovery::findHhkbStudioInterfaces(root);
+    std::filesystem::remove_all(root);
+
+    require(interfaces.size() == 2, "the interfaces that cannot take configuration requests were kept");
+    require(interfaces[0].path == "/dev/hidraw-b-settings", "the configuration interface was dropped");
+    require(interfaces[1].path == "/dev/hidraw-d-unreadable", "an interface whose descriptor cannot be read should be kept");
+}
+
 void supportedInterfacesAreDiscovered()
 {
     const auto root = std::filesystem::temp_directory_path()
@@ -669,10 +750,13 @@ int main()
         protocolPacketsAreEncodedAndDecoded();
         profileIsReadInBoundedChunks();
         supportedInterfacesAreDiscovered();
+        onlyConfigurationInterfacesAreKept();
         writePacketIsEncoded();
         profileWriteIsVerifiedByReadBack();
         failedWriteRestoresBackup();
         mismatchedReadBackRestoresBackup();
+        readBackFailureRestoresTheBackup();
+        anActiveProfileOutOfRangeIsRejected();
         writeTargetIsChecked();
         writeSurvivesFailedReturnToProfile();
         profileSwitchPacketIsEncoded();

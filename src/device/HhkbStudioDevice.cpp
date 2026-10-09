@@ -61,7 +61,13 @@ std::uint16_t HhkbStudioDevice::activeProfile()
 {
     const auto response = readProperty(protocol::Property::CurrentProfile);
     if (!transport_.isBluetooth()) {
-        return protocol::decodeBigEndian16(response, protocol::textPayloadOffset);
+        const auto profile = protocol::decodeBigEndian16(response, protocol::textPayloadOffset);
+        if (profile >= protocol::profileCount) {
+            throw DeviceError(
+                DeviceErrorCode::Protocol,
+                "HHKB Studio reported an unexpected profile");
+        }
+        return profile;
     }
     // Over Bluetooth: 02 11 01 <x> <profile>, the profile counted from 0 as over USB. <x> was 01 on the first
     // Bluetooth slot (USB has 00); it is not used here.
@@ -234,7 +240,21 @@ void HhkbStudioDevice::writeCurrentProfile(
                          "apply the saved backup to recover."));
     }
 
-    if (readCurrentProfile() != profile) {
+    // Reading it back can fail like writing it can; either way the keyboard may hold what was just written.
+    std::vector<std::uint8_t> readBack;
+    try {
+        readBack = readCurrentProfile();
+    } catch (const std::exception& error) {
+        const bool restored = tryRestore(backup);
+        throw DeviceError(
+            DeviceErrorCode::InputOutput,
+            std::string("The written profile could not be checked: ") + error.what()
+                + (restored
+                       ? " The previous profile was restored."
+                       : " The previous profile could not be restored; "
+                         "apply the saved backup to recover."));
+    }
+    if (readBack != profile) {
         const bool restored = tryRestore(backup);
         throw DeviceError(
             DeviceErrorCode::Protocol,

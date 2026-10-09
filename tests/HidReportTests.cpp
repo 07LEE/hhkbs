@@ -12,6 +12,7 @@ namespace {
 using hhkbs::device::Report;
 using hhkbs::device::configurationReportId;
 using hhkbs::device::extractConfigurationReport;
+using hhkbs::device::hasConfigurationCollection;
 
 void require(const bool condition, const std::string& message)
 {
@@ -55,6 +56,18 @@ void bluetoothUsesReportIdFour()
             "the key reports hide the configuration Report ID");
     require(configurationReportId(joined(vendorCollection({0x85, 0x04}), keyboardCollection)) == 4,
             "a collection after the vendor one replaced its Report ID");
+}
+
+void theConfigurationCollectionIsRecognisedWithOrWithoutAnId()
+{
+    require(hasConfigurationCollection(vendorCollection({})), "a USB configuration collection was not recognised");
+    require(hasConfigurationCollection(vendorCollection({0x85, 0x04})), "a Bluetooth configuration collection was not recognised");
+    require(hasConfigurationCollection(joined(keyboardCollection, vendorCollection({0x85, 0x04}))),
+            "the collection after the key reports was not found");
+    require(!hasConfigurationCollection(keyboardCollection), "a descriptor with only key reports has no configuration collection");
+    require(!hasConfigurationCollection(Bytes{0x06, 0x31, 0xFF, 0x09, 0x74, 0xA1, 0x01, 0xC0}),
+            "another vendor page was taken for the configuration one");
+    require(!hasConfigurationCollection({}), "an empty descriptor has no configuration collection");
 }
 
 void otherPagesAreIgnored()
@@ -127,6 +140,7 @@ int main()
     try {
         usbHasNoReportId();
         bluetoothUsesReportIdFour();
+        theConfigurationCollectionIsRecognisedWithOrWithoutAnId();
         otherPagesAreIgnored();
         unusualItemsAreSkippedCorrectly();
         brokenDescriptorsAreSafe();

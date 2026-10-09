@@ -29,9 +29,14 @@ public:
         std::size_t responseCount) override;
 
 private:
-    void waitFor(short events) const;
+    using Deadline = std::chrono::steady_clock::time_point;
+    // Waits until the descriptor is ready, or until `deadline`, however many other reports arrive meanwhile.
+    void waitFor(short events, Deadline deadline) const;
+    // Throws away what the keyboard sent before this request: an answer that came after an earlier request gave up,
+    // or reports it sent on its own. Left in place they would be taken for the answer to this one.
+    void discardPending() const;
     void writeReport(const Report& report) const;
-    [[nodiscard]] Report readReport() const;
+    [[nodiscard]] Report readReport(Deadline deadline) const;
     // The next report that answers `request`; reports the keyboard sends on its own are skipped.
     [[nodiscard]] Report readResponse(const Report& request) const;
 

@@ -55,6 +55,7 @@ HidrawTransport::~HidrawTransport()
 
 Report HidrawTransport::exchange(const Report& request)
 {
+    discardPending();
     writeReport(request);
     return readResponse(request);
 }
@@ -63,6 +64,7 @@ std::vector<Report> HidrawTransport::exchange(
     const Report& request,
     const std::size_t responseCount)
 {
+    discardPending();
     writeReport(request);
     std::vector<Report> responses;
     responses.reserve(responseCount);
@@ -75,8 +77,10 @@ std::vector<Report> HidrawTransport::exchange(
 Report HidrawTransport::readResponse(const Report& request) const
 {
     const bool asksForPad = protocol::isNotification(request) && request[0] == 0x02;
+    // The whole wait for this answer is bounded; reports that are skipped do not start it over.
+    const auto deadline = std::chrono::steady_clock::now() + timeout_;
     for (;;) {
-        auto report = readReport();
+        auto report = readReport(deadline);
         if (!protocol::isNotification(report)) {
             return report;
         }
@@ -87,15 +91,38 @@ Report HidrawTransport::readResponse(const Report& request) const
     }
 }
 
-void HidrawTransport::waitFor(const short events) const
+void HidrawTransport::discardPending() const
 {
+    std::array<std::uint8_t, Report{}.size() + 1> packet{};
+    // A keyboard that never stops sending cannot keep this going forever.
+    for (int discarded = 0; discarded < 256;) {
+        const auto count = ::read(fileDescriptor_, packet.data(), packet.size());
+        if (count > 0) {
+            ++discarded;
+            continue;
+        }
+        if (count < 0 && errno == EINTR) {
+            continue;
+        }
+        break;  // nothing left, or the device is gone, which the request will find out
+    }
+}
+
+void HidrawTransport::waitFor(const short events, const Deadline deadline) const
+{
+    const auto left = std::chrono::ceil<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now());
+    if (left.count() <= 0) {
+        throw DeviceError(
+            DeviceErrorCode::Timeout,
+            "timed out while communicating with " + path_.string());
+    }
     pollfd descriptor{
         .fd = fileDescriptor_,
         .events = events,
         .revents = 0,
     };
 
-    const auto result = ::poll(&descriptor, 1, static_cast<int>(timeout_.count()));
+    const auto result = ::poll(&descriptor, 1, static_cast<int>(left.count()));
     if (result == 0) {
         throw DeviceError(
             DeviceErrorCode::Timeout,
@@ -117,9 +144,10 @@ void HidrawTransport::writeReport(const Report& report) const
     if (reportId_) packet.push_back(*reportId_);
     packet.insert(packet.end(), report.begin(), report.end());
 
+    const auto deadline = std::chrono::steady_clock::now() + timeout_;
     std::size_t offset = 0;
     while (offset < packet.size()) {
-        waitFor(POLLOUT);
+        waitFor(POLLOUT, deadline);
         const auto written = ::write(
             fileDescriptor_,
             packet.data() + offset,
@@ -135,13 +163,13 @@ void HidrawTransport::writeReport(const Report& report) const
     }
 }
 
-Report HidrawTransport::readReport() const
+Report HidrawTransport::readReport(const Deadline deadline) const
 {
     // One read() returns one whole report. Over Bluetooth the same node also delivers key and mouse reports,
     // which are skipped.
     std::array<std::uint8_t, Report{}.size() + 1> packet{};
     for (;;) {
-        waitFor(POLLIN);
+        waitFor(POLLIN, deadline);
         const auto count = ::read(fileDescriptor_, packet.data(), packet.size());
         if (count > 0) {
             Report report{};

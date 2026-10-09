@@ -1,13 +1,17 @@
 #include "device/DeviceDiscovery.h"
 
+#include "device/HidDescriptor.h"
+
 #include <algorithm>
 #include <charconv>
 #include <fstream>
+#include <iterator>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <system_error>
 #include <unistd.h>
+#include <vector>
 
 namespace hhkbs::device {
 namespace {
@@ -60,6 +64,20 @@ void parseHidId(const std::string_view value, UeventData& data)
     data.hasHidId = true;
 }
 
+// The report descriptor the kernel keeps for an interface, or nothing when it cannot be read.
+std::optional<std::vector<std::uint8_t>> readDescriptor(const std::filesystem::path& path)
+{
+    std::ifstream input(path, std::ios::binary);
+    if (!input) {
+        return std::nullopt;
+    }
+    std::vector<std::uint8_t> bytes{std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
+    if (bytes.empty()) {
+        return std::nullopt;
+    }
+    return bytes;
+}
+
 std::optional<UeventData> readUevent(const std::filesystem::path& path)
 {
     std::ifstream input(path);
@@ -97,6 +115,14 @@ std::vector<DeviceInfo> DeviceDiscovery::findHhkbStudioInterfaces(
         if (!uevent
             || uevent->vendorId != hhkbStudioVendorId
             || uevent->productId != hhkbStudioProductId) {
+            continue;
+        }
+
+        // A keyboard has several interfaces (keys, mouse, settings); the requests only mean something to the one that
+        // carries the configuration collection, and the others would just time out. When the descriptor cannot be
+        // read the interface is kept, since it may still be the right one.
+        if (const auto descriptor = readDescriptor(iterator->path() / "device" / "report_descriptor");
+            descriptor && !hasConfigurationCollection(*descriptor)) {
             continue;
         }
 

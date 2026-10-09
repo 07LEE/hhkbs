@@ -5,6 +5,7 @@
 #include "keymap/Keymap.h"
 
 #include <array>
+#include <functional>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -74,11 +75,17 @@ public:
 
     [[nodiscard]] Report exchange(const Report& request) override
     {
+        if (beforeRequest) beforeRequest(*this, request);
         Report response{};
         const auto address = static_cast<std::size_t>(
             (static_cast<std::uint16_t>(request[1]) << 8U) | request[2]);
 
         if (request[0] == 0x12) {
+            ++dataReads;
+            if (writes > 0 && (failReadsAfterWrite || failNextReadAfterWrite)) {
+                failNextReadAfterWrite = false;
+                throw hhkbs::device::DeviceError(hhkbs::device::DeviceErrorCode::Timeout, "timed out");
+            }
             for (std::size_t index = 0; index < request[3]; ++index) {
                 response[4 + index] = memory.at(address + index);
             }
@@ -117,6 +124,11 @@ public:
     std::size_t ignoreSwitchNumber = 0;
     std::size_t failWriteNumber = 0;
     std::size_t corruptUntilWrite = 0;
+    std::size_t dataReads = 0;
+    bool failNextReadAfterWrite = false;  // the first read after a write times out, once
+    bool failReadsAfterWrite = false;     // every read after a write times out
+    // Called with every request before it is answered, so a test can change the keyboard at a chosen moment.
+    std::function<void(StorageTransport&, const Report&)> beforeRequest;
 };
 
 inline std::vector<std::uint8_t> patternProfile(const std::uint8_t seed)

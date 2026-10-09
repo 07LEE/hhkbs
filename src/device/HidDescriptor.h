@@ -12,6 +12,10 @@ namespace hhkbs::device {
 // collection has none. Over USB the configuration reports carry no ID; over Bluetooth they use ID 4.
 [[nodiscard]] std::optional<std::uint8_t> configurationReportId(std::span<const std::uint8_t> descriptor);
 
+// Whether the descriptor has the vendor-defined configuration collection (usage page 0xFF60) at all, with or
+// without a Report ID. The interfaces of a keyboard that are not this one carry key, mouse or other reports.
+[[nodiscard]] bool hasConfigurationCollection(std::span<const std::uint8_t> descriptor);
+
 // The same for an open hidraw node; nothing when its descriptor cannot be read.
 [[nodiscard]] std::optional<std::uint8_t> readConfigurationReportId(int hidraw);
 
