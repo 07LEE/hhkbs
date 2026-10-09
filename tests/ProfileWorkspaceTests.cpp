@@ -165,6 +165,27 @@ void unsavedWorkPutAsideIsListed()
     require(work.stashedUnsavedList() == "Profile 1, Profile 3", "both profiles put aside were not listed in order");
 }
 
+void loadedContentComesOntoTheScreenAsSaved()
+{
+    ProfileWorkspace work;
+    Keymap file(keyboardProfile());
+    file.setScanCode(0, 7, 0x0010);
+
+    // Nothing read from the keyboard yet: the content is what it is, and counts as saved.
+    work.loadContent(file, "Imported test.toml");
+    require(work.loaded && work.summary == "Imported test.toml", "the content was not put on screen");
+    require(work.keymap.toBytes() == file.toBytes() && !work.unsaved(), "loaded content counted as unsaved");
+    require(!work.selected, "content from a file is not a profile of the keyboard");
+
+    // With the keyboard's profile read, the content is compared with it.
+    ProfileWorkspace read;
+    read.adoptKeyboardProfile(1, keyboardProfile(), "serial");
+    read.loadContent(file, "Backup from today");
+    require(read.selected == 1 && read.summary == "Backup from today", "the profile on screen was not described");
+    require(read.keymap.isKeyModified(0, 7), "the key that differs from the keyboard was not marked");
+    require(!read.unsaved(), "loaded content counted as unsaved");
+}
+
 void aFileOrBackupIsComparedWithTheKeyboard()
 {
     ProfileWorkspace work;
@@ -208,6 +229,7 @@ int main()
         readingCanDiscardOnlyWhatDidNotComeFromTheKeyboardOrIsTheSameProfile();
         aDifferentKeyboardReplacesEverythingReadFromTheFirst();
         unsavedWorkPutAsideIsListed();
+        loadedContentComesOntoTheScreenAsSaved();
         aFileOrBackupIsComparedWithTheKeyboard();
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

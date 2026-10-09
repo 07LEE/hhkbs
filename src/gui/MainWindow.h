@@ -38,9 +38,13 @@ private:
         std::string error;
         std::vector<hhkbs::keymap::KeyChange> changes;
     };
-    void beginScan(std::optional<std::uint16_t> profile = std::nullopt, bool reconnect = false, bool anyKeyboard = false);
+    // reconnect: only bring the connection back, without reading the profile. anyKeyboard: take whichever keyboard
+    // answers. quiet: a scan the user did not ask for, which leaves the status line alone until it finds something.
+    void beginScan(std::optional<std::uint16_t> profile = std::nullopt, bool reconnect = false, bool anyKeyboard = false,
+                   bool quiet = false);
     void selectProfile(std::uint16_t profile);
     void pollScan();
+    void attachKeyboard(const ScanResult& result);
     void beginPadChange(std::size_t pad, bool on);
     void pollPadChange();
     void pollConnection();
@@ -51,6 +55,7 @@ private:
     void drawChanges();
     [[nodiscard]] bool busy() const { return scan_.valid() || apply_.valid() || pad_.valid() || preview_.valid(); }
     void request(Action action);
+    void openUnsaved(Action action);
     void perform(Action action);
     void requestImport(const std::filesystem::path& path);
     [[nodiscard]] bool importFile(const std::filesystem::path& path);

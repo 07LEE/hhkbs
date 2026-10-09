@@ -60,6 +60,10 @@ public:
     // that has been read, so the keys it would change are marked and Discard changes goes back to the keyboard's content.
     void useKeyboardAsReference();
 
+    // Content that came from a file, a backup or the defaults comes onto the screen as it is. It is compared with what
+    // the keyboard holds for the profile on screen, when that has been read, and counts as saved.
+    void loadContent(keymap::Keymap content, std::string description);
+
     // A profile was read from the keyboard with `serial`. It comes onto the screen; edits it had are kept. When it is
     // another keyboard than before, everything read from the previous one is forgotten, since it no longer describes
     // what is connected.

@@ -81,18 +81,31 @@ MainWindow::MainWindow(bool demoMode)
     } else beginScan();
 }
 
-void MainWindow::beginScan(std::optional<std::uint16_t> target, const bool reconnect, const bool anyKeyboard)
+void MainWindow::beginScan(std::optional<std::uint16_t> target, const bool reconnect, const bool anyKeyboard,
+                           const bool quiet)
 {
     if (scan_.valid()) return;
     reconnectScan_ = reconnect;
-    if (!reconnect) {
+    if (!reconnect && !quiet) {
         status_ = "Searching...";
         message_ = "Checking available HID interfaces...";
     }
-    // A profile chosen on the keyboard that is on screen is read from that keyboard, not from whichever answers first.
-    // Reading again on request takes whichever keyboard answers, since that is how a different one is picked up.
-    const std::string serial = target && !anyKeyboard ? work_.keyboardSerial : std::string();
+    // A profile chosen on the keyboard that is on screen is read from that keyboard, not from whichever answers first,
+    // and bringing the connection back means the same keyboard. Reading again on request takes whichever keyboard
+    // answers, since that is how a different one is picked up.
+    const std::string serial = reconnect || (target && !anyKeyboard) ? work_.keyboardSerial : std::string();
     scan_ = std::async(std::launch::async, hhkbs::app::scanKeyboard, std::ref(hhkbs::app::hidrawAccess()), target, reconnect, serial);
+}
+
+// The connection to the keyboard that answered a scan: where it is, how it is reached, and the pads it reported.
+void MainWindow::attachKeyboard(const ScanResult& result)
+{
+    disconnected_ = false;
+    bluetooth_ = result.bluetooth;
+    pads_.start(result.path);
+    wasListening_ = true;
+    for (std::size_t pad = 0; pad < result.pads.size(); ++pad)
+        if (result.pads[pad]) pads_.set(pad, *result.pads[pad]);
 }
 
 void MainWindow::pollScan()
@@ -107,14 +120,9 @@ void MainWindow::pollScan()
                 return;
             }
             // The editor content is left alone, edited or not.
-            disconnected_ = false;
-            bluetooth_ = result.bluetooth;
+            attachKeyboard(result);
             status_ = result.status;
             message_.clear();
-            pads_.start(result.path);
-            wasListening_ = true;
-            for (std::size_t pad = 0; pad < result.pads.size(); ++pad)
-                if (result.pads[pad]) pads_.set(pad, *result.pads[pad]);
             return;
         }
         if (!result.bytes.empty() && work_.keyboardChanged(result.serial) && work_.stashedUnsaved()) {
@@ -128,15 +136,14 @@ void MainWindow::pollScan()
         message_ = result.detail;
         if (!result.bytes.empty()) {
             work_.adoptKeyboardProfile(result.profile.value_or(0), result.bytes, result.serial);
-            disconnected_ = false;
-            if (!result.path.empty()) {
-                pads_.start(result.path);
-                wasListening_ = true;
-                for (std::size_t pad = 0; pad < result.pads.size(); ++pad)
-                    if (result.pads[pad]) pads_.set(pad, *result.pads[pad]);
-            }
+            attachKeyboard(result);
             work_.summary = result.detail;
             message_.clear();
+        } else if (result.status == "No device" || result.status == "Permission required") {
+            // Nothing to talk to yet: keep an eye on the interfaces and pick the keyboard up when it shows.
+            disconnected_ = true;
+            seenPaths_.clear();
+            nextProbe_ = std::chrono::steady_clock::now() + std::chrono::seconds(1);
         }
     } catch (const std::exception& error) { status_ = "Profile error"; message_ = error.what(); }
 }
@@ -177,7 +184,9 @@ void MainWindow::pollConnection()
         if (paths != seenPaths_) { seenPaths_ = paths; settledAt_ = now + std::chrono::seconds(3); }
         if (paths.empty() || now < settledAt_) return;
         nextProbe_ = now + std::chrono::seconds(2);
-        beginScan(work_.selected, true);
+        // With nothing on screen yet the keyboard is read, as at startup; otherwise only the connection comes back.
+        if (work_.loaded) beginScan(work_.selected, true);
+        else beginScan(std::nullopt, false, false, true);
         return;
     }
     if (!wasListening_ || pads_.listening()) return;
@@ -269,13 +278,16 @@ void MainWindow::selectProfile(std::uint16_t profile)
 void MainWindow::request(Action action)
 {
     // Closing loses the work on every profile; the other actions only replace the one on screen.
-    if (action == Action::Close ? work_.anyUnsaved() : work_.unsaved()) {
-        if (action == Action::Close && work_.showFirstUnsaved()) message_.clear();
-        pending_ = action;
-        dialogError_.clear();
-        dialog_ = Dialog::Unsaved;
-    }
+    if (action == Action::Close ? work_.anyUnsaved() : work_.unsaved()) openUnsaved(action);
     else perform(action);
+}
+// Asks what to do with the unsaved work before `action`. When closing, the profile that has some is brought on screen.
+void MainWindow::openUnsaved(Action action)
+{
+    if (action == Action::Close && work_.showFirstUnsaved()) message_.clear();
+    pending_ = action;
+    dialogError_.clear();
+    dialog_ = Dialog::Unsaved;
 }
 void MainWindow::perform(Action action)
 {
@@ -299,7 +311,7 @@ void MainWindow::perform(Action action)
     }
     else if (action == Action::Close) {
         // After saving one profile, the next one with unsaved work is asked about, until none is left.
-        if (work_.anyUnsaved()) { if (work_.showFirstUnsaved()) message_.clear(); pending_ = Action::Close; dialog_ = Dialog::Unsaved; }
+        if (work_.anyUnsaved()) openUnsaved(Action::Close);
         else close_ = true;
     }
 }
@@ -318,12 +330,7 @@ void MainWindow::requestImport(const std::filesystem::path& path)
 bool MainWindow::importFile(const std::filesystem::path& path)
 {
     try {
-        auto profile = hhkbs::keymap::readProfile(path);
-        work_.keymap = std::move(profile);
-        work_.useKeyboardAsReference();
-        work_.savedBytes = work_.keymap.toBytes();
-        work_.loaded = true;
-        work_.summary = "Imported " + path.filename().string();
+        work_.loadContent(hhkbs::keymap::readProfile(path), "Imported " + path.filename().string());
         status_ = "Imported profile";
         message_.clear();
         directory_ = path.parent_path();
@@ -376,12 +383,8 @@ void MainWindow::requestLoadBackup(const hhkbs::keymap::BackupEntry& entry)
 bool MainWindow::loadBackup(const hhkbs::keymap::BackupEntry& entry)
 {
     try {
-        auto profile = hhkbs::keymap::readProfile(entry.path);
-        work_.keymap = std::move(profile);
-        work_.useKeyboardAsReference();
-        work_.savedBytes = work_.keymap.toBytes();
-        work_.loaded = true;
-        work_.summary = std::string("Backup ") + (entry.tag.empty() ? "" : "\"" + entry.tag + "\" ") + "from " + entry.timestamp;
+        work_.loadContent(hhkbs::keymap::readProfile(entry.path),
+                          std::string("Backup ") + (entry.tag.empty() ? "" : "\"" + entry.tag + "\" ") + "from " + entry.timestamp);
         status_ = "Loaded backup";
         message_.clear();
         finishDialog();
@@ -897,11 +900,7 @@ void MainWindow::drawDialog()
                         work_.keymap.setScanCode(layer, slot, defaults.scanCode(layer,slot));
                 work_.savedBytes = work_.keymap.toBytes();  // the built-in keymap is not something that can be lost
             } else {
-                work_.keymap = defaults;
-                work_.loaded = true;
-                work_.useKeyboardAsReference();
-                work_.savedBytes = work_.keymap.toBytes();
-                work_.summary = "Default keymap";
+                work_.loadContent(defaults, "Default keymap");
                 status_ = "Loaded default keymap";
                 message_.clear();
             }

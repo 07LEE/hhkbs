@@ -137,6 +137,24 @@ void reconnectOnlyFindsTheConnection()
     require(result.bluetooth, "the connection type was not reported");
 }
 
+void reconnectBringsBackTheKeyboardThatWasRead()
+{
+    FakeAccess access;
+    access.add("A");
+    access.add("B");
+
+    // Nothing has been read yet, so any keyboard will do.
+    const auto any = hhkbs::app::scanKeyboard(access, std::nullopt, true, "");
+    require(any.status == "Connected" && any.path == "/dev/hidraw0", "a reconnect with nothing read should take the first keyboard");
+
+    const auto second = hhkbs::app::scanKeyboard(access, std::nullopt, true, "B");
+    require(second.status == "Connected" && second.path == "/dev/hidraw1", "the keyboard that was read was not found again");
+
+    const auto gone = hhkbs::app::scanKeyboard(access, std::nullopt, true, "C");
+    require(gone.status == "Connection failed" && gone.path.empty(), "another keyboard was taken for the one that was read");
+    require(contains(gone.detail, "not connected"), "the reason was not given");
+}
+
 void scanSaysWhyNothingWasFound()
 {
     FakeAccess none;
@@ -345,6 +363,7 @@ int main()
         scanReadsTheCurrentProfile();
         scanReadsAnotherProfileAndLeavesTheKeyboardOnItsOwn();
         reconnectOnlyFindsTheConnection();
+        reconnectBringsBackTheKeyboardThatWasRead();
         scanSaysWhyNothingWasFound();
         scanOnlyReadsTheKeyboardThatWasRead();
         applyWritesTheProfileAndKeepsABackup();

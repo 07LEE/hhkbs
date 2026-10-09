@@ -97,6 +97,15 @@ void ProfileWorkspace::useKeyboardAsReference()
     if (selected && !keyboardBytes[*selected].empty()) keymap.rebase(keyboardBytes[*selected]);
 }
 
+void ProfileWorkspace::loadContent(keymap::Keymap content, std::string description)
+{
+    keymap = std::move(content);
+    useKeyboardAsReference();
+    savedBytes = keymap.toBytes();
+    loaded = true;
+    summary = std::move(description);
+}
+
 void ProfileWorkspace::adoptKeyboardProfile(const std::uint16_t profile, const std::vector<std::uint8_t>& bytes,
                                             const std::string& serial)
 {

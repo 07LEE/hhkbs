@@ -71,7 +71,9 @@ ScanResult scanKeyboard(KeyboardAccess& access, const std::optional<std::uint16_
                 hhkbs::device::HhkbStudioDevice device(*transport);
                 if (device.readProductName() != "HHKB-Studio") continue;
                 if (reconnect) {
-                    // Only bring the connection back; the profile is read when the user asks for it.
+                    // Only bring the connection back; the profile is read when the user asks for it. It has to be the
+                    // keyboard that was read, not another one that happens to be plugged in.
+                    if (!serial.empty() && device.readSerialNumber() != serial) { otherKeyboard = true; continue; }
                     result.path = item.path;
                     result.bluetooth = item.bluetooth;
                     for (std::size_t pad = 0; pad < result.pads.size(); ++pad) {
