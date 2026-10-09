@@ -1,4 +1,5 @@
 #include "gui/KeyAssignmentDialog.h"
+#include "gui/Theme.h"
 #include "gui/DialogWidgets.h"
 #include "keymap/ScanCodeCatalog.h"
 #include <imgui.h>
@@ -37,7 +38,7 @@ std::optional<hhkbs::keymap::Keymap::ScanCode> KeyAssignmentDialog::draw(bool& c
     for (const auto& entry : entries)
         if (std::find(categories.begin(), categories.end(), entry.category) == categories.end()) categories.push_back(entry.category);
 
-    ImGui::BeginChild("Assignments", ImVec2(0, 290), ImGuiChildFlags_Borders);
+    ImGui::BeginChild("Assignments", theme::dp(0, 290), ImGuiChildFlags_Borders);
     for (const auto& category : categories) {
         bool headerShown = false;
         for (const auto& entry : entries) {
@@ -53,7 +54,7 @@ std::optional<hhkbs::keymap::Keymap::ScanCode> KeyAssignmentDialog::draw(bool& c
                 accept = ImGui::IsMouseDoubleClicked(0);
             }
             // The code sits in its own right-hand column, dimmed, on the same line as the name.
-            ImGui::SameLine(rowX + rowWidth - ImGui::CalcTextSize(hex).x - 8);
+            ImGui::SameLine(rowX + rowWidth - ImGui::CalcTextSize(hex).x - theme::dp(8.f));
             ImGui::TextDisabled("%s", hex);
             if (scrollToCurrent_ && entry.code == current_) { ImGui::SetScrollHereY(.35f); scrollToCurrent_ = false; }
             ImGui::PopID();

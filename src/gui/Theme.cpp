@@ -56,16 +56,29 @@ static bool systemPrefersDark()
     return contains(run("gsettings get org.gnome.desktop.interface gtk-theme 2>/dev/null"), "dark");
 }
 
+static float currentScale = 1.f;
+static void apply(bool dark);
+
+float scale() { return currentScale; }
+
+void setScale(const float value)
+{
+    currentScale = value > 0.f ? value : 1.f;
+    if (initialized) apply(currentDark);
+}
+
 static void apply(bool dark)
 {
-    if (dark) ImGui::StyleColorsDark(); else ImGui::StyleColorsLight();
     auto& style = ImGui::GetStyle();
+    style = ImGuiStyle();  // sizes start from the plain ones each time, so scaling them again does not add up
+    if (dark) ImGui::StyleColorsDark(); else ImGui::StyleColorsLight();
     style.WindowPadding = ImVec2(24,24);
     style.FramePadding = ImVec2(12,8);
     style.ItemSpacing = ImVec2(10,10);
     style.FrameRounding = 5;
     style.ChildRounding = 10;
     style.WindowRounding = 8;
+    style.ScaleAllSizes(currentScale);
     auto& c = style.Colors;
     if (dark) {
         current.window = ImVec4(.09f,.10f,.12f,1);

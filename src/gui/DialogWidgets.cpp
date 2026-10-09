@@ -14,8 +14,8 @@ void title(const char* text, const char* note)
     ImGui::SetWindowFontScale(1.f);
     if (!note) return;
     // Same trick as the main header: the small text shares the title's baseline.
-    const float noteTop = top + ImGui::GetItemRectSize().y - ImGui::GetTextLineHeight() - 2.f;
-    ImGui::SameLine(0, 12.f);
+    const float noteTop = top + ImGui::GetItemRectSize().y - ImGui::GetTextLineHeight() - theme::dp(2.f);
+    ImGui::SameLine(0, theme::dp(12.f));
     ImGui::SetCursorPosY(noteTop);
     ImGui::TextDisabled("%s", note);
 }
@@ -47,7 +47,7 @@ namespace {
 
 float buttonWidth(const FooterButton& button)
 {
-    return std::max(110.f, ImGui::CalcTextSize(button.label).x + ImGui::GetStyle().FramePadding.x * 2);
+    return std::max(theme::dp(110.f), ImGui::CalcTextSize(button.label).x + ImGui::GetStyle().FramePadding.x * 2);
 }
 
 // One footer button; returns whether it was pressed.

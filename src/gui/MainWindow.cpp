@@ -441,7 +441,7 @@ void MainWindow::drawBackupList(const float belowList)
     if (backupList_.entries.empty()) ImGui::TextDisabled("No backups yet. One is saved before every apply, or press Save.");
     // A table: the date it was saved (dimmed) and the tag (bright, blank when there is none).
     if (!backupList_.entries.empty() && ImGui::BeginTable("BackupRows", 2, ImGuiTableFlags_ScrollY | ImGuiTableFlags_RowBg)) {
-        ImGui::TableSetupColumn("Saved", ImGuiTableColumnFlags_WidthFixed, ImGui::CalcTextSize("0000-00-00 00:00:00").x + 24.f);
+        ImGui::TableSetupColumn("Saved", ImGuiTableColumnFlags_WidthFixed, ImGui::CalcTextSize("0000-00-00 00:00:00").x + theme::dp(24.f));
         ImGui::TableSetupColumn("Tag", ImGuiTableColumnFlags_WidthStretch);
         ImGui::TableSetupScrollFreeze(0, 1);
         // Each header is centered over what its column holds: the date and the whole tag column.
@@ -477,7 +477,7 @@ void MainWindow::drawBackups()
     const bool chosen = backupList_.choice.has_value();
     // What is under the list: the row of buttons, and in the Manage tab the tag row too (plus the gaps between them).
     const auto& style = ImGui::GetStyle();
-    const float footerBelow = style.ItemSpacing.y * 2 + ImGui::GetFrameHeight() + 2.f;
+    const float footerBelow = style.ItemSpacing.y * 2 + ImGui::GetFrameHeight() + theme::dp(2.f);
     const float tagRowBelow = ImGui::GetFrameHeight() + style.ItemSpacing.y;
     // The tab to come up on is asked for once: when the window opens, and when coming back from a delete or clean-up.
     const auto wanted = std::exchange(selectTab_, std::nullopt);
@@ -512,7 +512,7 @@ void MainWindow::drawBackups()
         const auto& style = ImGui::GetStyle();
         const auto buttonWidth = [&](const char* label) { return ImGui::CalcTextSize(label).x + style.FramePadding.x * 2; };
         // Save tag belongs to the input, so it sits close to it; Delete keeps the usual gap so it is not hit by mistake.
-        const float tagGap = 4.f;
+        const float tagGap = theme::dp(4.f);
         ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - buttonWidth("Save tag") - buttonWidth("Delete") - tagGap - style.ItemSpacing.x);
         const bool entered = ImGui::InputText("##tag", backupList_.tagInput.data(), backupList_.tagInput.size(), ImGuiInputTextFlags_EnterReturnsTrue);
         ImGui::SameLine(0, tagGap);
@@ -551,7 +551,7 @@ void MainWindow::drawCleanBackups()
     ImGui::AlignTextToFramePadding();
     ImGui::TextUnformatted("Keep the newest");
     ImGui::SameLine();
-    ImGui::SetNextItemWidth(110);
+    ImGui::SetNextItemWidth(theme::dp(110.f));
     ImGui::InputInt("##keep", &backupList_.keep);
     backupList_.keep = std::clamp(backupList_.keep, 1, 999);
     ImGui::SameLine();
@@ -575,7 +575,7 @@ void MainWindow::drawDeleteBackup()
 {
     if (!confirmDelete_ || !backupList_.choice) return;
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(.5f,.5f));
-    ImGui::SetNextWindowSize(ImVec2(460,0), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(theme::dp(460, 0), ImGuiCond_Always);
     if (!ImGui::BeginPopupModal("Delete backup", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
     const auto entry = backupList_.entries[*backupList_.choice];
     dialog::title("Delete backup");
@@ -722,15 +722,15 @@ void MainWindow::drawImportTab(const float belowList)
     const auto& style = ImGui::GetStyle();
     const float errorHeight = dialogError_.empty() ? 0.f
         : ImGui::CalcTextSize(dialogError_.c_str(), nullptr, false, ImGui::GetContentRegionAvail().x).y + style.ItemSpacing.y;
-    ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(8, 4));
+    ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, theme::dp(8, 4));
     ImGui::BeginChild("Files", ImVec2(0, -(belowList + errorHeight)), ImGuiChildFlags_Borders);
     if (ImGui::BeginTable("files", 3, ImGuiTableFlags_ScrollY | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingFixedFit)) {
         ImGui::TableSetupScrollFreeze(0, 1);
         ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch);
-        ImGui::TableSetupColumn("Modified", ImGuiTableColumnFlags_WidthFixed, 130.f);
-        ImGui::TableSetupColumn("Size", ImGuiTableColumnFlags_WidthFixed, 70.f);
+        ImGui::TableSetupColumn("Modified", ImGuiTableColumnFlags_WidthFixed, theme::dp(130.f));
+        ImGui::TableSetupColumn("Size", ImGuiTableColumnFlags_WidthFixed, theme::dp(70.f));
         ImGui::TableHeadersRow();
-        const float iconWidth = ImGui::GetTextLineHeight() * 1.05f + 8.f;
+        const float iconWidth = ImGui::GetTextLineHeight() * 1.05f + theme::dp(8.f);
         for (std::size_t i=0; i<entries.size(); ++i) {
             const auto& entry = entries[i];
             ImGui::TableNextRow();
@@ -806,10 +806,10 @@ void MainWindow::drawChanges()
     const float rowHeight = ImGui::GetTextLineHeight() + style.CellPadding.y * 2;
     const float error = dialogError_.empty() ? 0.f
         : ImGui::CalcTextSize(dialogError_.c_str(), nullptr, false, ImGui::GetContentRegionAvail().x).y + style.ItemSpacing.y;
-    const float footer = style.ItemSpacing.y * 3 + error + ImGui::GetFrameHeight() + style.WindowPadding.y + 2.f;
+    const float footer = style.ItemSpacing.y * 3 + error + ImGui::GetFrameHeight() + style.WindowPadding.y + theme::dp(2.f);
     const auto* viewport = ImGui::GetMainViewport();
     // The dialog stays centered and may be as tall as the window less a margin; the rest of that is for the table.
-    const float room = viewport->WorkSize.y - 40.f - ImGui::GetCursorPosY() - footer;
+    const float room = viewport->WorkSize.y - theme::dp(40.f) - ImGui::GetCursorPosY() - footer;
     const float fitting = std::max(3.f, std::floor(room / rowHeight) - 1.f);  // one row is the header
     const float rows = std::min({static_cast<float>(preview.changes.size()), 10.f, fitting});
     if (!ImGui::BeginTable("ApplyChanges", 3, ImGuiTableFlags_ScrollY | ImGuiTableFlags_RowBg | ImGuiTableFlags_Borders,
@@ -839,11 +839,11 @@ void MainWindow::drawDialog()
     // The Backups dialogs share one height, in lines of text so it follows the font, and never taller than the window;
     // every other dialog is as tall as its content.
     const bool fixedHeight = dialog_ == Dialog::Backups || dialog_ == Dialog::CleanBackups;
-    const float backupsHeight = std::min(ImGui::GetFrameHeightWithSpacing() * 14.f, viewport->WorkSize.y - 40.f);
+    const float backupsHeight = std::min(ImGui::GetFrameHeightWithSpacing() * 14.f, viewport->WorkSize.y - theme::dp(40.f));
     // The Apply dialog grows when the keyboard's answer brings the list of changes, so it is kept centered instead of
     // only when it appears; otherwise it would grow down and off the window.
     ImGui::SetNextWindowPos(viewport->GetCenter(), dialog_ == Dialog::Apply ? ImGuiCond_Always : ImGuiCond_Appearing, ImVec2(.5f,.5f));
-    ImGui::SetNextWindowSize(ImVec2(620, fixedHeight ? backupsHeight : 0), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(theme::dp(620.f), fixedHeight ? backupsHeight : 0), ImGuiCond_Always);
     if (!ImGui::BeginPopupModal("HHKBS", nullptr, fixedHeight ? ImGuiWindowFlags_NoResize : ImGuiWindowFlags_AlwaysAutoResize)) return;
     // Every dialog draws its own title, error line and footer through dialog::.
     if (dialog_ == Dialog::Assign) {
@@ -998,8 +998,8 @@ void MainWindow::draw()
     ImGui::SetWindowFontScale(1.7f);
     ImGui::TextUnformatted("HHKBS");
     ImGui::SetWindowFontScale(1.f);
-    const float smallTop = titleTop + ImGui::GetItemRectSize().y - ImGui::GetTextLineHeight() - 3.f;
-    ImGui::SameLine(0, 16.f);
+    const float smallTop = titleTop + ImGui::GetItemRectSize().y - ImGui::GetTextLineHeight() - theme::dp(3.f);
+    ImGui::SameLine(0, theme::dp(16.f));
     ImGui::SetCursorPosY(smallTop);
     ImGui::TextDisabled("HHKB Studio Keymap Editor for Linux");
     ImGui::SameLine();
@@ -1023,17 +1023,17 @@ void MainWindow::draw()
         ImGui::SameLine();
         const bool selected = i == layer_;
         if (selected) ImGui::PushStyleColor(ImGuiCol_Button, theme::palette().selected);
-        if (ImGui::Button(layers[i], ImVec2(76,32))) layer_ = i;
+        if (ImGui::Button(layers[i], theme::dp(76, 32))) layer_ = i;
         if (selected) ImGui::PopStyleColor();
     }
     ImGui::EndDisabled();
     // Profiles are right-aligned; wrap below the layers when the window is too narrow.
     const float spacing = ImGui::GetStyle().ItemSpacing.x;
-    const float refreshWidth = 32.f;
-    const float profilesWidth = refreshWidth + spacing + ImGui::CalcTextSize("Keyboard profile").x + 4*(96 + spacing);
+    const float refreshWidth = theme::dp(32.f);
+    const float profilesWidth = refreshWidth + spacing + ImGui::CalcTextSize("Keyboard profile").x + 4*(theme::dp(96.f) + spacing);
     const float profilesX = ImGui::GetWindowWidth() - ImGui::GetStyle().WindowPadding.x - profilesWidth;
     const float layersEnd = ImGui::GetItemRectMax().x - ImGui::GetWindowPos().x;
-    const bool sideBySide = profilesX >= layersEnd + 36.f;
+    const bool sideBySide = profilesX >= layersEnd + theme::dp(36.f);
     if (sideBySide) ImGui::SameLine(profilesX);
     else ImGui::Spacing();
     ImGui::BeginDisabled(demo_ || busy);
@@ -1048,18 +1048,18 @@ void MainWindow::draw()
         // Over Bluetooth only the profile the keyboard is on can be read; one already read can still be shown.
         const bool usbOnly = bluetooth_ && !selected && !work_.stashed[i];
         ImGui::BeginDisabled(usbOnly);
-        if (ImGui::Button(label.c_str(), ImVec2(96,32))) selectProfile(i);
+        if (ImGui::Button(label.c_str(), theme::dp(96, 32))) selectProfile(i);
         ImGui::EndDisabled();
         // A dot marks a profile whose work differs from what the keyboard holds.
         if (std::find(editedProfiles.begin(), editedProfiles.end(), i) != editedProfiles.end())
-            ImGui::GetWindowDrawList()->AddCircleFilled(ImVec2(ImGui::GetItemRectMax().x - 9.f, ImGui::GetItemRectMin().y + 9.f),
-                                                        3.f, theme::palette().keyBorderChanged);
+            ImGui::GetWindowDrawList()->AddCircleFilled(ImVec2(ImGui::GetItemRectMax().x - theme::dp(9.f), ImGui::GetItemRectMin().y + theme::dp(9.f)),
+                                                        theme::dp(3.f), theme::palette().keyBorderChanged);
         if (usbOnly) ImGui::SetItemTooltip("Other profiles can be read over USB");
         if (selected) ImGui::PopStyleColor();
     }
     // Re-reads the profile the keyboard is using; it replaces the editor content, so unsaved edits are confirmed first.
     ImGui::SameLine();
-    if (ImGui::Button("##refresh", ImVec2(refreshWidth, 32))) request(Action::Read);
+    if (ImGui::Button("##refresh", ImVec2(refreshWidth, theme::dp(32.f)))) request(Action::Read);
     drawRefreshIcon(ImGui::GetWindowDrawList(), ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), ImGui::GetColorU32(ImGuiCol_Text));
     ImGui::SetItemTooltip("Read the profile the keyboard is currently using");
     ImGui::EndDisabled();
@@ -1067,7 +1067,7 @@ void MainWindow::draw()
     const auto& style = ImGui::GetStyle();
     // Reserve exactly what is drawn under the keyboard: the button row. Messages live inside the keyboard frame.
     const float below = style.ItemSpacing.y + ImGui::GetFrameHeight();
-    const float boardHeight = std::max(320.f, ImGui::GetContentRegionAvail().y - below - 2.f);
+    const float boardHeight = std::max(theme::dp(320.f), ImGui::GetContentRegionAvail().y - below - theme::dp(2.f));
     std::array<std::optional<bool>, 4> padStates{};
     for (std::size_t pad = 0; pad < padStates.size(); ++pad) {
         const auto state = pads_.state(pad);
@@ -1106,7 +1106,7 @@ void MainWindow::draw()
 
     const auto buttonWidth = [&](const char* label) { return ImGui::CalcTextSize(label).x + style.FramePadding.x * 2; };
     const float rightX = ImGui::GetWindowWidth() - style.WindowPadding.x - buttonWidth("Apply to keyboard");
-    if (rightX >= ImGui::GetItemRectMax().x - ImGui::GetWindowPos().x + 36.f) ImGui::SameLine(rightX);
+    if (rightX >= ImGui::GetItemRectMax().x - ImGui::GetWindowPos().x + theme::dp(36.f)) ImGui::SameLine(rightX);
     else ImGui::SameLine();
     ImGui::PushStyleColor(ImGuiCol_Button, theme::palette().accent);
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, theme::palette().accentHovered);

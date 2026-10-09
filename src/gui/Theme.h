@@ -24,4 +24,11 @@ Mode nextMode(Mode mode);
 void refresh();
 
 const Palette& palette();
+
+// How much larger than the plain layout this screen is drawn: 1 on an ordinary display, 2 on one that shows
+// everything at twice the size. Sizes written in the layout are multiplied by it with dp().
+float scale();
+void setScale(float scale);
+inline float dp(float value) { return value * scale(); }
+inline ImVec2 dp(float x, float y) { return ImVec2(x * scale(), y * scale()); }
 }

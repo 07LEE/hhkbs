@@ -60,19 +60,27 @@ std::optional<std::size_t> drawKeyboard(const hhkbs::keymap::Keymap& keymap,
     const auto start = ImGui::GetCursorScreenPos();
     auto* draw = ImGui::GetWindowDrawList();
     // Keep the caption clear of the keys by laying the keyboard out below it.
-    const float captionHeight = caption.empty() ? 0.f : ImGui::GetTextLineHeight() + 8.f;
+    const float captionHeight = caption.empty() ? 0.f : ImGui::GetTextLineHeight() + theme::dp(8.f);
     if (captionHeight > 0.f) {
-        draw->AddText(ImVec2(start.x + 2, start.y + 2), ImGui::GetColorU32(ImGuiCol_TextDisabled), caption.c_str());
+        draw->AddText(ImVec2(start.x + theme::dp(2.f), start.y + theme::dp(2.f)), ImGui::GetColorU32(ImGuiCol_TextDisabled), caption.c_str());
         available.y = std::max(1.f, available.y - captionHeight);
     }
-    const float unit = std::max(1.0f, std::min(available.x / 17.8f, available.y / 6.1f));
+    const auto unitFor = [&] { return std::max(1.0f, std::min(available.x / 17.8f, available.y / 6.1f)); };
+    // The notice sits at the bottom of the frame. When the keys would reach down to it, as in a low window, they are
+    // laid out above it instead.
+    if (!notice.empty()) {
+        const float noticeBlock = ImGui::CalcTextSize(notice.c_str(), nullptr, false, std::max(1.f, available.x - theme::dp(4.f))).y
+                                  + theme::dp(8.f);
+        if (available.y - unitFor() * 6.1f < 2 * noticeBlock) available.y = std::max(1.f, available.y - noticeBlock);
+    }
+    const float unit = unitFor();
     const ImVec2 origin(start.x + (available.x - unit * 17.8f) / 2,
                         start.y + captionHeight + (available.y - unit * 6.1f) / 2);
     const auto key = [&](const hhkbs::keymap::KeyPosition& pos, bool gesture) {
         const int pad = gesture ? padOf(pos.slot) : -1;
         const bool padOff = pad >= 0 && padsOn[pad] == false;
-        const ImVec2 top(origin.x + pos.x * unit + 3, origin.y + pos.y * unit + 3);
-        const ImVec2 size(pos.width * unit - 6, unit * .82f - 3);
+        const ImVec2 top(origin.x + pos.x * unit + theme::dp(3.f), origin.y + pos.y * unit + theme::dp(3.f));
+        const ImVec2 size(pos.width * unit - theme::dp(6.f), unit * .82f - theme::dp(3.f));
         const ImVec2 bottom(top.x + size.x, top.y + size.y);
         ImGui::SetCursorScreenPos(top);
         ImGui::PushID(static_cast<int>(pos.slot));
@@ -84,41 +92,41 @@ std::optional<std::size_t> drawKeyboard(const hhkbs::keymap::Keymap& keymap,
             hovered ? pal.keyHover : gesture ? pal.keyGesture : pal.keyFill;
         const auto border = changed ? pal.keyBorderChanged :
             gesture ? pal.keyBorderGesture : pal.keyBorder;
-        draw->AddRectFilled(top, bottom, background, 6);
-        draw->AddRect(top, bottom, border, 6, 0, changed ? 2.f : 1.f);
+        draw->AddRectFilled(top, bottom, background, theme::dp(6.f));
+        draw->AddRect(top, bottom, border, theme::dp(6.f), 0, theme::dp(changed ? 2.f : 1.f));
         const auto& legend = pos.legend;
-        const float legendSize = std::clamp(unit * .16f, 9.f, 13.f);
+        const float legendSize = std::clamp(unit * .16f, theme::dp(9.f), theme::dp(13.f));
         draw->PushClipRect(top, bottom, true);
-        draw->AddText(ImGui::GetFont(), legendSize, ImVec2(top.x+5, top.y+4),
+        draw->AddText(ImGui::GetFont(), legendSize, ImVec2(top.x + theme::dp(5.f), top.y + theme::dp(4.f)),
                       pal.keyLegend, legend.c_str());
         const auto label = hhkbs::keymap::ScanCodeCatalog::compactLabelFor(keymap.scanCode(layer, pos.slot));
         // Wrap long names on word boundaries and use the largest size at which they fit the key.
-        const float maxWidth = size.x - 8, maxHeight = size.y - 18;
-        const float preferred = std::clamp(unit * .24f, 11.f, 19.f);
+        const float maxWidth = size.x - theme::dp(8.f), maxHeight = size.y - theme::dp(18.f);
+        const float preferred = std::clamp(unit * .24f, theme::dp(11.f), theme::dp(19.f));
         auto* font = ImGui::GetFont();
         std::vector<std::string> lines;
         float fontSize = preferred;
-        for (; fontSize >= 9.f; fontSize -= .5f) {
+        for (; fontSize >= theme::dp(9.f); fontSize -= theme::dp(.5f)) {
             lines = wrapWords(font, fontSize, label, maxWidth);
             if (!lines.empty() && lines.size() * fontSize * 1.15f <= maxHeight) break;
         }
-        if (fontSize < 9.f) {
+        if (fontSize < theme::dp(9.f)) {
             // Nothing fits at a readable size: keep one line and shrink it to the key width.
-            fontSize = 9.f;
+            fontSize = theme::dp(9.f);
             lines = {label};
             const float width = font->CalcTextSizeA(fontSize, 1000, 0, label.c_str()).x;
             if (width > maxWidth) fontSize *= maxWidth / width;
         }
         const float lineHeight = fontSize * 1.15f;
-        float y = top.y + 6 + (size.y - 6 - lineHeight * lines.size()) / 2;
+        float y = top.y + theme::dp(6.f) + (size.y - theme::dp(6.f) - lineHeight * lines.size()) / 2;
         for (const auto& line : lines) {
             const auto extent = font->CalcTextSizeA(fontSize, 1000, 0, line.c_str());
             draw->AddText(font, fontSize, ImVec2(top.x + (size.x - extent.x) / 2, y), pal.keyLabel, line.c_str());
             y += lineHeight;
         }
-        if (padOff) draw->AddRectFilled(top, bottom, ImGui::GetColorU32(ImGuiCol_WindowBg, .55f), 6);
+        if (padOff) draw->AddRectFilled(top, bottom, ImGui::GetColorU32(ImGuiCol_WindowBg, .55f), theme::dp(6.f));
         draw->PopClipRect();
-        if (changed) draw->AddCircleFilled(ImVec2(bottom.x-6, top.y+6), 2.5f, border);
+        if (changed) draw->AddCircleFilled(ImVec2(bottom.x - theme::dp(6.f), top.y + theme::dp(6.f)), theme::dp(2.5f), border);
         if (hovered) {
             const auto code = keymap.scanCode(layer, pos.slot);
             const auto description = hhkbs::keymap::ScanCodeCatalog::labelFor(code);
@@ -138,8 +146,8 @@ std::optional<std::size_t> drawKeyboard(const hhkbs::keymap::Keymap& keymap,
         const auto& tag = tags[pad];
         const bool known = padsOn[pad].has_value();
         const bool on = padsOn[pad].value_or(true);
-        const ImVec2 top(origin.x + tag.x * unit + 3, origin.y + tag.y * unit + 3);
-        const ImVec2 size(tag.width * unit - 6, unit * .82f - 3);
+        const ImVec2 top(origin.x + tag.x * unit + theme::dp(3.f), origin.y + tag.y * unit + theme::dp(3.f));
+        const ImVec2 size(tag.width * unit - theme::dp(6.f), unit * .82f - theme::dp(3.f));
         const ImVec2 bottom(top.x + size.x, top.y + size.y);
         ImGui::SetCursorScreenPos(top);
         ImGui::PushID(static_cast<int>(pad) + 1000);
@@ -148,8 +156,8 @@ std::optional<std::size_t> drawKeyboard(const hhkbs::keymap::Keymap& keymap,
         const bool hovered = known && ImGui::IsItemHovered();
         ImGui::PopID();
         const auto& pal = theme::palette();
-        draw->AddRectFilled(top, bottom, hovered ? pal.keyHover : pal.keyFill, 6);
-        draw->AddRect(top, bottom, on ? pal.keyBorderGesture : pal.keyBorder, 6);
+        draw->AddRectFilled(top, bottom, hovered ? pal.keyHover : pal.keyFill, theme::dp(6.f));
+        draw->AddRect(top, bottom, on ? pal.keyBorderGesture : pal.keyBorder, theme::dp(6.f));
         const char* text = on ? "On" : "Off";
         const auto extent = ImGui::CalcTextSize(text);
         draw->AddText(ImVec2(top.x + (size.x - extent.x) / 2, top.y + (size.y - extent.y) / 2),
@@ -160,10 +168,10 @@ std::optional<std::size_t> drawKeyboard(const hhkbs::keymap::Keymap& keymap,
         }
     }
     if (!notice.empty()) {
-        const float wrap = std::max(1.f, available.x - 4.f);
+        const float wrap = std::max(1.f, available.x - theme::dp(4.f));
         const auto extent = ImGui::CalcTextSize(notice.c_str(), nullptr, false, wrap);
         draw->AddText(ImGui::GetFont(), ImGui::GetFontSize(),
-                      ImVec2(start.x + 2, start.y + ImGui::GetWindowHeight() - ImGui::GetStyle().WindowPadding.y * 2 + 8 - extent.y),
+                      ImVec2(start.x + theme::dp(2.f), start.y + ImGui::GetWindowHeight() - ImGui::GetStyle().WindowPadding.y * 2 + theme::dp(8.f) - extent.y),
                       ImGui::GetColorU32(noticeMuted ? ImGuiCol_TextDisabled : ImGuiCol_Text), notice.c_str(), nullptr, wrap);
     }
     ImGui::EndChild();

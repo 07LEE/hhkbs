@@ -1,4 +1,5 @@
 #include "gui/MainWindow.h"
+#include "gui/HangulSyllables.h"
 #include "gui/Theme.h"
 #include <GLFW/glfw3.h>
 #include <imgui.h>
@@ -9,6 +10,7 @@
 #include <array>
 #include <string>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <csignal>
 #include <cstdlib>
@@ -16,6 +18,7 @@
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <optional>
 #include <string_view>
 #include <vector>
 
@@ -23,23 +26,74 @@ namespace {
 volatile std::sig_atomic_t terminateRequested = 0;
 extern "C" void onTerminate(int) { terminateRequested = 1; }
 
-void loadSystemFont(ImFontAtlas& atlas)
-{
-    // Ask the host's Fontconfig utility for its configured sans-serif face.
-    // No font file or Fontconfig library is bundled with the application.
+struct FontFile {
     std::string path;
-    if (FILE* query = ::popen("fc-match --format='%{file}' sans-serif 2>/dev/null", "r")) {
+    int index = 0;  // which face of a collection (.ttc)
+};
+
+// Asks the host's Fontconfig utility which file serves `pattern`. No font file or Fontconfig library is bundled with
+// the application.
+std::optional<FontFile> findFont(const char* pattern)
+{
+    std::string output;
+    const std::string command = std::string("fc-match --format='%{file}\\n%{index}' '") + pattern + "' 2>/dev/null";
+    if (FILE* query = ::popen(command.c_str(), "r")) {
         std::array<char, 1024> buffer{};
         while (const auto count = std::fread(buffer.data(), 1, buffer.size(), query))
-            path.append(buffer.data(), count);
-        if (::pclose(query) != 0) path.clear();
+            output.append(buffer.data(), count);
+        if (::pclose(query) != 0) return std::nullopt;
     }
-    if (!path.empty() && std::ifstream(path, std::ios::binary).good()) {
-        if (atlas.AddFontFromFileTTF(path.c_str(), 16.f)) return;
+    const auto newline = output.find('\n');
+    FontFile font{output.substr(0, newline), 0};
+    if (newline != std::string::npos) font.index = std::atoi(output.c_str() + newline + 1);
+    if (font.path.empty() || !std::ifstream(font.path, std::ios::binary).good()) return std::nullopt;
+    return font;
+}
+
+// The interface font at `size` pixels: the configured sans-serif face, and when that has no Hangul (as most Latin
+// faces have none) a Korean-capable face merged into it, so profile and backup names in Korean can be read.
+void loadSystemFont(ImFontAtlas& atlas, const float size)
+{
+    const auto base = findFont("sans-serif");
+    bool loaded = false;
+    if (base) {
+        ImFontConfig config;
+        config.FontNo = base->index;
+        loaded = atlas.AddFontFromFileTTF(base->path.c_str(), size, &config) != nullptr;
     }
-    ImFontConfig fallback;
-    fallback.SizePixels = 16.f;
-    atlas.AddFontDefault(&fallback);
+    if (!loaded) {
+        ImFontConfig fallback;
+        fallback.SizePixels = size;
+        atlas.AddFontDefault(&fallback);
+    }
+    const auto korean = findFont("sans-serif:lang=ko");
+    if (korean && (!base || korean->path != base->path || korean->index != base->index)) {
+        ImFontConfig config;
+        config.MergeMode = true;  // only adds the glyphs the first face lacks
+        config.FontNo = korean->index;
+        // The ranges have to stay alive until the atlas is built, which is after this returns.
+        static ImVector<ImWchar> ranges;
+        if (ranges.empty()) {
+            ImFontGlyphRangesBuilder builder;
+            static const ImWchar jamo[] = {0x3131, 0x3163, 0};  // the letters on their own, as typed one by one
+            builder.AddRanges(jamo);
+            builder.AddText(theme::commonHangulSyllables);
+            builder.BuildRanges(&ranges);
+        }
+        atlas.AddFontFromFileTTF(korean->path.c_str(), size, &config, ranges.Data);
+    }
+}
+
+// How large to draw: HHKBS_SCALE if set, else what the desktop reports for the screen, never below 1.
+float displayScale()
+{
+    if (const char* text = std::getenv("HHKBS_SCALE")) {
+        const float requested = static_cast<float>(std::atof(text));
+        if (requested >= 0.5f && requested <= 4.f) return requested;
+    }
+    float x = 1.f, y = 1.f;
+    if (GLFWmonitor* monitor = glfwGetPrimaryMonitor()) glfwGetMonitorContentScale(monitor, &x, &y);
+    return std::clamp(std::max(x, y), 1.f, 4.f);
 }
 
 // BMP output keeps capture support independent of any image/GUI runtime.
@@ -87,10 +141,14 @@ int main(int argc, char* argv[])
     std::unique_ptr<void, decltype(terminate)> guard(reinterpret_cast<void*>(1), terminate);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR,3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR,0);
+    // The layout is drawn for an ordinary display; a screen that shows everything larger gets a larger window,
+    // larger text and larger gaps in the same proportion.
+    const float scale = displayScale();
+    const auto scaled = [scale](const int pixels) { return static_cast<int>(std::lround(pixels * scale)); };
     std::unique_ptr<GLFWwindow, decltype(&glfwDestroyWindow)> window(
-        glfwCreateWindow(1180,700,"HHKBS",nullptr,nullptr),glfwDestroyWindow);
+        glfwCreateWindow(scaled(1180),scaled(700),"HHKBS",nullptr,nullptr),glfwDestroyWindow);
     if (!window) return 1;
-    glfwSetWindowSizeLimits(window.get(),940,620,GLFW_DONT_CARE,GLFW_DONT_CARE);
+    glfwSetWindowSizeLimits(window.get(),scaled(940),scaled(620),GLFW_DONT_CARE,GLFW_DONT_CARE);
     glfwMakeContextCurrent(window.get());
     glfwSwapInterval(1);
     IMGUI_CHECKVERSION();
@@ -98,7 +156,8 @@ int main(int argc, char* argv[])
     auto& io = ImGui::GetIO();
     io.IniFilename = nullptr;
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
-    loadSystemFont(*io.Fonts);
+    loadSystemFont(*io.Fonts, 16.f * scale);
+    theme::setScale(scale);
     theme::mode();
     if (!ImGui_ImplGlfw_InitForOpenGL(window.get(),true)) {
         std::fprintf(stderr,"Could not initialize the GUI backend.\n");
