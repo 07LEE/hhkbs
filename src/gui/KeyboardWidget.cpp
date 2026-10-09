@@ -85,7 +85,8 @@ std::optional<std::size_t> drawKeyboard(const hhkbs::keymap::Keymap& keymap,
         ImGui::SetCursorScreenPos(top);
         ImGui::PushID(static_cast<int>(pos.slot));
         if (ImGui::InvisibleButton("key", size, ImGuiButtonFlags_EnableNav)) activated = pos.slot;
-        const bool hovered = ImGui::IsItemHovered() || ImGui::IsItemFocused();
+        // A key that kept the focus after a click keeps no tooltip; only moving with the keyboard shows it by focus.
+        const bool hovered = ImGui::IsItemHovered() || (ImGui::IsItemFocused() && ImGui::GetIO().NavVisible);
         const bool changed = keymap.isKeyModified(layer, pos.slot);
         const auto& pal = theme::palette();
         const auto background = changed ? pal.keyChanged :
@@ -151,8 +152,9 @@ std::optional<std::size_t> drawKeyboard(const hhkbs::keymap::Keymap& keymap,
         const ImVec2 bottom(top.x + size.x, top.y + size.y);
         ImGui::SetCursorScreenPos(top);
         ImGui::PushID(static_cast<int>(pad) + 1000);
-        ImGui::InvisibleButton("pad", size);
-        if (known && ImGui::IsItemClicked()) padToggled = pad;
+        // The pad changes when the button is released, like any other, and can be reached and pressed from the keyboard.
+        const bool pressed = ImGui::InvisibleButton("pad", size, ImGuiButtonFlags_EnableNav);
+        if (known && pressed) padToggled = pad;
         const bool hovered = known && ImGui::IsItemHovered();
         ImGui::PopID();
         const auto& pal = theme::palette();

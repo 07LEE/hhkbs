@@ -22,6 +22,7 @@ void KeyAssignmentDialog::reset(hhkbs::keymap::Keymap::ScanCode code, std::strin
     keyName_ = std::move(keyName);
     current_ = code;
     scrollToCurrent_ = true;
+    openedAt_ = ImGui::GetTime();
 }
 std::optional<hhkbs::keymap::Keymap::ScanCode> KeyAssignmentDialog::draw(bool& cancelled) {
     dialog::title("Assign key");
@@ -31,6 +32,9 @@ std::optional<hhkbs::keymap::Keymap::ScanCode> KeyAssignmentDialog::draw(bool& c
     ImGui::InputTextWithHint("##search", "Search keys, categories or hex codes", search_.data(), search_.size());
     const auto needle = lower(search_.data());
     bool accept = false;
+    // Double-clicking a key opens this dialog on the first click, and the second one lands on whatever row is under the
+    // pointer. Until a double click could no longer be that one, a double click does not choose a row.
+    const bool settled = ImGui::GetTime() - openedAt_ > ImGui::GetIO().MouseDoubleClickTime;
 
     // Entries grouped under their category, in the order the catalog lists them.
     const auto& entries = hhkbs::keymap::ScanCodeCatalog::entries();
@@ -51,7 +55,7 @@ std::optional<hhkbs::keymap::Keymap::ScanCode> KeyAssignmentDialog::draw(bool& c
             const float rowX = ImGui::GetCursorPosX(), rowWidth = ImGui::GetContentRegionAvail().x;
             if (ImGui::Selectable(entry.label.c_str(), lower(raw_.data()) == lower(hex), ImGuiSelectableFlags_AllowDoubleClick)) {
                 std::snprintf(raw_.data(), raw_.size(), "%s", hex);
-                accept = ImGui::IsMouseDoubleClicked(0);
+                accept = settled && ImGui::IsMouseDoubleClicked(0);
             }
             // The code sits in its own right-hand column, dimmed, on the same line as the name.
             ImGui::SameLine(rowX + rowWidth - ImGui::CalcTextSize(hex).x - theme::dp(8.f));
@@ -66,7 +70,7 @@ std::optional<hhkbs::keymap::Keymap::ScanCode> KeyAssignmentDialog::draw(bool& c
     ImGui::AlignTextToFramePadding();
     ImGui::TextUnformatted("Raw hex code");
     ImGui::SameLine();
-    ImGui::SetNextItemWidth(110);
+    ImGui::SetNextItemWidth(theme::dp(110.f));
     ImGui::InputText("##raw", raw_.data(), raw_.size());
     std::string_view value(raw_.data());
     if (value.starts_with("0x") || value.starts_with("0X")) value.remove_prefix(2);

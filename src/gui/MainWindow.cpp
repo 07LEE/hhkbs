@@ -38,28 +38,20 @@ std::string keyName(std::size_t slot)
     return "Key " + std::to_string(slot);
 }
 
-// Runs xdg-open in the background. The path is passed as an argument, never spliced into a command line.
-bool openFolder(const std::filesystem::path& folder)
+enum class OpenResult { Opened, NoOpener, Failed };
+
+// Runs xdg-open in the background. The path is passed as an argument, never spliced into a command line. The shell
+// that would run it also says whether it exists, so there is one place that looks.
+OpenResult openFolder(const std::filesystem::path& folder)
 {
-    const std::string command = "xdg-open \"$1\" >/dev/null 2>&1 &";
+    const std::string command = "command -v xdg-open >/dev/null 2>&1 || exit 127; xdg-open \"$1\" >/dev/null 2>&1 &";
     const char* argv[] = {"sh", "-c", command.c_str(), "sh", folder.c_str(), nullptr};
     pid_t child = 0;
-    if (::posix_spawnp(&child, "sh", nullptr, nullptr, const_cast<char* const*>(argv), environ) != 0) return false;
+    if (::posix_spawnp(&child, "sh", nullptr, nullptr, const_cast<char* const*>(argv), environ) != 0) return OpenResult::Failed;
     int status = 0;
-    return ::waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 0;
-}
-
-bool commandExists(const char* name)
-{
-    const char* path = std::getenv("PATH");
-    if (!path) return false;
-    std::string list = path;
-    for (std::size_t start = 0; start <= list.size();) {
-        const auto end = std::min(list.find(':', start), list.size());
-        if (::access((list.substr(start, end - start) + "/" + name).c_str(), X_OK) == 0) return true;
-        start = end + 1;
-    }
-    return false;
+    if (::waitpid(child, &status, 0) != child || !WIFEXITED(status)) return OpenResult::Failed;
+    if (WEXITSTATUS(status) == 127) return OpenResult::NoOpener;
+    return WEXITSTATUS(status) == 0 ? OpenResult::Opened : OpenResult::Failed;
 }
 
 }  // namespace
@@ -390,6 +382,7 @@ void MainWindow::openApply()
 void MainWindow::openBackups(bool manage)
 {
     backupList_.reload();
+    filesDir_.clear();  // the Import tab reads its folder again
     confirmDelete_ = false;
     dialogError_.clear();
     selectTab_ = manage ? BackupTab::Manage : BackupTab::Restore;
@@ -415,10 +408,13 @@ bool MainWindow::loadBackup(const hhkbs::keymap::BackupEntry& entry)
 }
 void MainWindow::openBackupFolder()
 {
-    if (!commandExists("xdg-open"))
+    switch (openFolder(hhkbs::keymap::backupDirectory())) {
+    case OpenResult::NoOpener:
         dialogError_ = "xdg-open was not found. Open " + hhkbs::keymap::backupDirectory().string() + " yourself.";
-    else if (!openFolder(hhkbs::keymap::backupDirectory())) dialogError_ = "Could not open the folder.";
-    else dialogError_.clear();
+        break;
+    case OpenResult::Failed: dialogError_ = "Could not open the folder."; break;
+    case OpenResult::Opened: dialogError_.clear(); break;
+    }
 }
 // The list fills the dialog down to what sits under it (`belowList`), and an error message under the list takes its
 // own height from the list. So nothing under the list ever floats away from it, whatever the dialog shows.
@@ -431,7 +427,8 @@ void MainWindow::drawBackupList(const float belowList)
     const auto& style = ImGui::GetStyle();
     const float width = ImGui::CalcTextSize("Open folder").x + style.FramePadding.x * 2;
     ImGui::SameLine(ImGui::GetWindowWidth() - style.WindowPadding.x - width);
-    ImGui::BeginDisabled(!std::filesystem::is_directory(folder));
+    std::error_code folderError;
+    ImGui::BeginDisabled(!std::filesystem::is_directory(folder, folderError));
     if (ImGui::Button("Open folder")) openBackupFolder();
     ImGui::EndDisabled();
     const float errorHeight = dialogError_.empty() ? 0.f
@@ -576,15 +573,33 @@ void MainWindow::drawDeleteBackup()
     if (!confirmDelete_ || !backupList_.choice) return;
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(.5f,.5f));
     ImGui::SetNextWindowSize(theme::dp(460, 0), ImGuiCond_Always);
-    if (!ImGui::BeginPopupModal("Delete backup", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
+    if (!ImGui::BeginPopupModal("Delete backup", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        // The confirmation went away some other way; there is nothing to confirm any more.
+        if (confirmShown_) {
+            confirmShown_ = false;
+            confirmDelete_ = false;
+        }
+        return;
+    }
+    confirmShown_ = true;
+    // Esc belongs to the confirmation while it is up: it closes that and leaves the dialog under it as it is.
+    if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+        escapeUsed_ = true;
+        confirmDelete_ = false;
+        confirmShown_ = false;
+        ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+        return;
+    }
     const auto entry = backupList_.entries[*backupList_.choice];
     dialog::title("Delete backup");
     const std::string named = entry.tag.empty() ? "" : "\"" + entry.tag + "\" ";
     ImGui::TextWrapped("Delete the backup %ssaved on %s? This cannot be undone.", named.c_str(), entry.timestamp.c_str());
     const int hit = dialog::footer({{"Back"}, {"Delete backup", false, true}});
-    if (hit == 0) { confirmDelete_ = false; ImGui::CloseCurrentPopup(); }
+    if (hit == 0) { confirmDelete_ = false; confirmShown_ = false; ImGui::CloseCurrentPopup(); }
     else if (hit == 1) {
         confirmDelete_ = false;
+        confirmShown_ = false;
         ImGui::CloseCurrentPopup();
         try {
             backupList_.deleteChosen();
@@ -667,6 +682,34 @@ void drawFolderIcon(ImDrawList* draw, ImVec2 topLeft, float height)
 }
 }
 
+// Lists the folder shown in the Import tab: folders and .toml files, folders first.
+void MainWindow::refreshFiles()
+{
+    files_.clear();
+    filesDir_ = directory_;
+    filesAt_ = std::chrono::steady_clock::now();
+    std::error_code error;
+    std::filesystem::directory_iterator it(directory_, error), end;
+    while (!error && it != end) {
+        std::error_code ec;
+        const bool isDirectory = it->is_directory(ec);
+        const bool hidden = it->path().filename().string().starts_with('.');
+        if (!ec && !hidden && (isDirectory || it->path().extension() == ".toml")) {
+            FileEntry entry{it->path(), isDirectory, {}, {}};
+            std::error_code timeError, sizeError;
+            const auto time = it->last_write_time(timeError);
+            if (!timeError) entry.modified = fileTime(time);
+            if (!isDirectory) { const auto bytes = it->file_size(sizeError); if (!sizeError) entry.size = fileSize(bytes); }
+            files_.push_back(std::move(entry));
+        }
+        it.increment(error);
+    }
+    filesNote_ = error ? error.message() : std::string();
+    std::sort(files_.begin(), files_.end(), [](const auto& a, const auto& b) {
+        return a.directory != b.directory ? a.directory > b.directory : a.path.filename() < b.path.filename();
+    });
+}
+
 void MainWindow::drawImportTab(const float belowList)
 {
     // Path bar: up button plus an editable folder; typing a .toml file path selects that file.
@@ -687,7 +730,8 @@ void MainWindow::drawImportTab(const float belowList)
     ImGui::SetNextItemWidth(-1);
     if (ImGui::InputText("##dir", dirInput_.data(), dirInput_.size(), ImGuiInputTextFlags_EnterReturnsTrue)) {
         std::error_code ec;
-        const std::filesystem::path entered(dirInput_.data());
+        std::filesystem::path entered(dirInput_.data());
+        if (entered.is_relative()) entered = directory_ / entered;  // relative to the folder shown, not to where the program started
         if (std::filesystem::is_directory(entered, ec)) goTo(entered);
         else if (std::filesystem::is_regular_file(entered, ec)) {
             goTo(entered.parent_path());
@@ -695,27 +739,8 @@ void MainWindow::drawImportTab(const float belowList)
         } else dialogError_ = "That folder is unavailable.";
     }
 
-    struct Entry { std::filesystem::path path; bool directory; std::string modified, size; };
-    std::vector<Entry> entries;
-    std::error_code error;
-    std::filesystem::directory_iterator it(directory_, error), end;
-    while (!error && it != end) {
-        std::error_code ec;
-        const bool isDirectory = it->is_directory(ec);
-        const bool hidden = it->path().filename().string().starts_with('.');
-        if (!ec && !hidden && (isDirectory || it->path().extension() == ".toml")) {
-            Entry entry{it->path(), isDirectory, {}, {}};
-            std::error_code timeError, sizeError;
-            const auto time = it->last_write_time(timeError);
-            if (!timeError) entry.modified = fileTime(time);
-            if (!isDirectory) { const auto bytes = it->file_size(sizeError); if (!sizeError) entry.size = fileSize(bytes); }
-            entries.push_back(std::move(entry));
-        }
-        it.increment(error);
-    }
-    std::sort(entries.begin(), entries.end(), [](const auto& a, const auto& b) {
-        return a.directory != b.directory ? a.directory > b.directory : a.path.filename() < b.path.filename();
-    });
+    if (filesDir_ != directory_ || std::chrono::steady_clock::now() - filesAt_ > std::chrono::seconds(1)) refreshFiles();
+    const auto& entries = files_;
 
     const std::filesystem::path chosen(path_.data());
     // The list fills the tab down to what sits under it, an error line included, like the list of backups does.
@@ -737,12 +762,12 @@ void MainWindow::drawImportTab(const float belowList)
             ImGui::TableNextColumn();
             ImGui::PushID(static_cast<int>(i));
             const ImVec2 iconPos = ImGui::GetCursorScreenPos();
-            ImGui::Indent(entry.directory ? iconWidth : 0.f);
+            if (entry.directory) ImGui::Indent(iconWidth);  // room for the folder icon; a file's name starts at the edge
             const auto name = entry.path.filename().string();
             const bool picked = !entry.directory && chosen == entry.path;
             const bool activated = ImGui::Selectable(name.c_str(), picked,
                 ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowDoubleClick);
-            ImGui::Unindent(entry.directory ? iconWidth : 0.f);
+            if (entry.directory) ImGui::Unindent(iconWidth);
             if (entry.directory) drawFolderIcon(ImGui::GetWindowDrawList(), iconPos, ImGui::GetTextLineHeight());
             ImGui::TableNextColumn();
             ImGui::TextDisabled("%s", entry.modified.c_str());
@@ -750,17 +775,19 @@ void MainWindow::drawImportTab(const float belowList)
             ImGui::TextDisabled("%s", entry.size.c_str());
             ImGui::PopID();
             if (!activated) continue;
-            const bool doubleClick = ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
-            if (entry.directory) { if (doubleClick) goTo(entry.path); continue; }
+            // Enter on a row does what a double click does, so folders can be opened and files imported from the keyboard.
+            const bool enter = ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter);
+            const bool open = ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) || enter;
+            if (entry.directory) { if (open) goTo(entry.path); continue; }
             dialogError_.clear();
             std::snprintf(path_.data(), path_.size(), "%s", entry.path.c_str());
-            // A double click imports at once, the same as the Import button below.
-            if (doubleClick) importPath_ = entry.path;
+            // Opening a file imports it at once, the same as the Import button below.
+            if (open) importPath_ = entry.path;
         }
         if (entries.empty()) {
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
-            ImGui::TextDisabled(error ? "Cannot list folder: %s" : "No folders or .toml files here", error.message().c_str());
+            ImGui::TextDisabled(filesNote_.empty() ? "No folders or .toml files here" : "Cannot list folder: %s", filesNote_.c_str());
         }
         ImGui::EndTable();
     }
@@ -886,7 +913,8 @@ void MainWindow::drawDialog()
                 const auto& preview = previews_[profile];
                 if (preview.read && preview.error.empty())
                     label += "   " + std::to_string(preview.changes.size()) + (preview.changes.size() == 1 ? " key" : " keys");
-                if (ImGui::Selectable(label.c_str(), applyView_ == profile)) applyView_ = profile;
+                // The count arrives later and changes the text; the ID after ### stays, so the row keeps its focus.
+                if (ImGui::Selectable((label + "###profile").c_str(), applyView_ == profile)) applyView_ = profile;
                 ImGui::PopID();
                 anyPicked = anyPicked || applyPick_[profile];
             }
@@ -928,7 +956,8 @@ void MainWindow::drawDialog()
             finishDialog();
         }
     }
-    if (ImGui::IsKeyPressed(ImGuiKey_Escape)) cancelDialog();
+    if (ImGui::IsKeyPressed(ImGuiKey_Escape) && !escapeUsed_) cancelDialog();
+    escapeUsed_ = false;
     ImGui::EndPopup();
 }
 

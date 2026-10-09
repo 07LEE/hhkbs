@@ -199,6 +199,7 @@ int main(int argc, char* argv[])
             const bool focused = glfwGetWindowAttrib(window.get(),GLFW_FOCUSED) == GLFW_TRUE;
             if (focused && !wasFocused) theme::refresh();
             wasFocused = focused;
+            theme::poll();
             ImGui_ImplOpenGL3_NewFrame();
             ImGui_ImplGlfw_NewFrame();
             ImGui::NewFrame();

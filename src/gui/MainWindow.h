@@ -80,6 +80,7 @@ private:
     [[nodiscard]] bool loadBackup(const hhkbs::keymap::BackupEntry& entry);
     void drawDialog();
     void drawImportTab(float belowList);
+    void refreshFiles();
     void finishDialog();
     void cancelDialog();
 
@@ -87,6 +88,8 @@ private:
     std::optional<hhkbs::keymap::BackupEntry> pendingBackup_;
     std::optional<std::uint16_t> pendingProfile_;  // the profile to read once unsaved edits have been dealt with
     std::optional<BackupTab> selectTab_;  // the Backups tab to come up on
+    bool confirmShown_ = false;   // the delete confirmation was on screen in the last frame
+    bool escapeUsed_ = false;     // Esc has just closed the delete confirmation, so it does not close the dialog too
     bool confirmDelete_ = false;  // the delete confirmation is open over the Backups window
     std::future<ScanResult> scan_;
     std::future<ApplyResult> apply_;
@@ -120,6 +123,12 @@ private:
     std::array<char, 4096> path_{};      // the file an Import will read
     std::array<char, 4096> dirInput_{};  // the editable folder bar; follows directory_ until edited
     std::array<char, 256> saveTag_{};    // the tag typed in the Save dialog
+    // What the Import tab lists. It is read when the folder changes and about once a second, not on every frame.
+    struct FileEntry { std::filesystem::path path; bool directory; std::string modified, size; };
+    std::vector<FileEntry> files_;
+    std::string filesNote_;  // why the list is empty when the folder cannot be read
+    std::filesystem::path filesDir_;
+    std::chrono::steady_clock::time_point filesAt_;
     std::filesystem::path shownDir_;
     std::filesystem::path pendingFile_;  // the file to import once unsaved edits have been dealt with
     std::filesystem::path droppedFile_;  // dropped on the window, taken up at the start of the next frame

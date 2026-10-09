@@ -4,6 +4,8 @@
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
+#include <chrono>
+#include <future>
 #include <string>
 #include <string_view>
 
@@ -153,9 +155,23 @@ const char* modeName(Mode m) { return m == Mode::Auto ? "Auto" : m == Mode::Ligh
 
 Mode nextMode(Mode m) { return m == Mode::Auto ? Mode::Light : m == Mode::Light ? Mode::Dark : Mode::Auto; }
 
+namespace {
+std::future<bool> pendingScheme;
+}
+
 void refresh()
 {
-    if (currentMode == Mode::Auto) resolve();
+    if (currentMode == Mode::Auto && !pendingScheme.valid()) pendingScheme = std::async(std::launch::async, systemPrefersDark);
+}
+
+void poll()
+{
+    if (!pendingScheme.valid() || pendingScheme.wait_for(std::chrono::seconds(0)) != std::future_status::ready) return;
+    const bool dark = pendingScheme.get();
+    if (currentMode != Mode::Auto) return;  // the mode was chosen by hand while the answer was on its way
+    if (dark != currentDark || !initialized) apply(dark);
+    currentDark = dark;
+    initialized = true;
 }
 
 const Palette& palette()
