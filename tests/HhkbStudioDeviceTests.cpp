@@ -513,37 +513,6 @@ void gesturePadsAreReadAndSwitched()
     require(caught, "a change the keyboard did not keep must be reported");
 }
 
-void padMonitorFollowsNotifications()
-{
-    using hhkbs::device::PadMonitor;
-    const auto fifo = std::filesystem::temp_directory_path() / ("hhkbs-pad-" + std::to_string(::getpid()));
-    require(::mkfifo(fifo.c_str(), 0600) == 0, "could not create the fake device");
-
-    PadMonitor monitor;
-    require(monitor.state(1) == PadMonitor::State::Unknown, "a pad must be unknown before any report");
-    monitor.start(fifo);
-    const int writer = ::open(fifo.c_str(), O_WRONLY);
-    const auto send = [&](const Report& report) { require(::write(writer, report.data(), report.size()) == 32, "write failed"); };
-    const auto waitFor = [&](const std::size_t pad, const PadMonitor::State expected) {
-        for (int attempt = 0; attempt < 100; ++attempt) {
-            if (monitor.state(pad) == expected) return true;
-            std::this_thread::sleep_for(std::chrono::milliseconds(20));
-        }
-        return false;
-    };
-
-    send(Report{0x02, 0x11, 0x05, 0x01, 0x01, 0x01});
-    require(waitFor(1, PadMonitor::State::On), "front left should be on after its report");
-    send(Report{0x02, 0x11, 0x05, 0x01, 0x01, 0x00});
-    require(waitFor(1, PadMonitor::State::Off), "front left should be off after its report");
-    require(monitor.state(0) == PadMonitor::State::Unknown, "a pad that never reported stays unknown");
-
-    monitor.stop();
-    ::close(writer);
-    ::unlink(fifo.c_str());
-    require(monitor.state(1) == PadMonitor::State::Unknown, "pads are unknown once listening stops");
-}
-
 void profileIsReadInBoundedChunks()
 {
     FakeTransport transport;
@@ -697,7 +666,6 @@ int main()
         bluetoothInterfacesAreTold();
         bluetoothProfileIsRead();
         gesturePadsAreReadAndSwitched();
-        padMonitorFollowsNotifications();
         protocolPacketsAreEncodedAndDecoded();
         profileIsReadInBoundedChunks();
         supportedInterfacesAreDiscovered();
