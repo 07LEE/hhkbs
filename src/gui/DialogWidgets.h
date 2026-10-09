@@ -1,4 +1,5 @@
 #pragma once
+#include <imgui.h>
 #include <initializer_list>
 #include <string>
 
@@ -16,6 +17,12 @@ struct FooterButton {
 void title(const char* text, const char* note = nullptr);
 void hint(const char* text);  // dimmed explanatory line under the title
 void error(const std::string& message);
+// The color of an error line.
+ImVec4 errorColor();
+
+// Colors the buttons drawn until popAccent(): red for a destructive action, otherwise the theme's accent.
+void pushAccent(bool danger = false);
+void popAccent();
 
 // For a dialog with a fixed height: moves down so the footer that follows ends at the bottom edge.
 void pinFooter();

@@ -21,11 +21,7 @@ std::string_view trim(std::string_view value)
 
 Keymap::ScanCode parseScanCode(std::string_view token)
 {
-    token = trim(token);
-    const auto comment = token.find('#');
-    if (comment != std::string_view::npos) {
-        token = trim(token.substr(0, comment));
-    }
+    token = trim(token);  // comments are gone before the scan codes are read
     if (token.empty()) {
         throw std::invalid_argument("profile contains an empty scan code");
     }
@@ -86,10 +82,10 @@ std::size_t findLayerHeader(const std::string_view structure, std::size_t from)
 {
     constexpr std::string_view layerHeader = "[[layers]]";
     while ((from = structure.find(layerHeader, from)) != std::string_view::npos) {
-        const auto lineStart = structure.rfind('\n', from);
-        const auto before = structure.substr(lineStart == std::string_view::npos ? 0 : lineStart + 1,
-                                             from - (lineStart == std::string_view::npos ? 0 : lineStart + 1));
-        if (trim(before).empty()) return from;
+        // Only the blanks in front of it are looked at, so a long line full of headers is not searched again and again.
+        std::size_t before = from;
+        while (before > 0 && (structure[before - 1] == ' ' || structure[before - 1] == '\t' || structure[before - 1] == '\r')) --before;
+        if (before == 0 || structure[before - 1] == '\n') return from;
         from += layerHeader.size();
     }
     return std::string_view::npos;
@@ -122,7 +118,10 @@ std::string ProfileSerializer::toToml(const Keymap& keymap)
 Keymap ProfileSerializer::fromToml(const std::string_view source)
 {
     constexpr std::string_view layerHeader = "[[layers]]";
-    const auto structure = withoutCommentsAndStrings(source);
+    // A file saved by some editors starts with a byte order mark; it is not part of the profile.
+    std::string_view text = source;
+    if (text.starts_with("\xEF\xBB\xBF")) text.remove_prefix(3);
+    const auto structure = withoutCommentsAndStrings(text);
     const std::string_view document = structure;
     std::vector<std::uint8_t> bytes;
     bytes.reserve(Keymap::profileByteCount);
@@ -134,7 +133,10 @@ Keymap ProfileSerializer::fromToml(const std::string_view source)
         if (layerStart == std::string_view::npos) {
             break;
         }
-        ++layerCount;
+        // A profile has four layers; more is wrong, and there is no need to read on to say so.
+        if (++layerCount > Keymap::layerCount) {
+            throw std::invalid_argument("profile must contain exactly four layers");
+        }
 
         const auto nextLayer =
             findLayerHeader(document, layerStart + layerHeader.size());

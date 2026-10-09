@@ -16,4 +16,5 @@ private:
     std::string keyName_;
     hhkbs::keymap::Keymap::ScanCode current_ = 0;
     bool scrollToCurrent_ = false;
+    double openedAt_ = 0;  // when the dialog came up; the click that opened it is not one on a row
 };

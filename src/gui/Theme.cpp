@@ -1,9 +1,12 @@
 #include "gui/Theme.h"
+#include "gui/Text.h"
 #include <algorithm>
 #include <array>
 #include <cctype>
 #include <cstdio>
 #include <cstdlib>
+#include <chrono>
+#include <future>
 #include <string>
 #include <string_view>
 
@@ -14,19 +17,7 @@ Mode currentMode = Mode::Auto;
 bool currentDark = false;
 bool initialized = false;
 
-std::string run(const char* command)
-{
-    std::string output;
-    if (FILE* pipe = ::popen(command, "r")) {
-        std::array<char, 256> buffer{};
-        while (const auto count = std::fread(buffer.data(), 1, buffer.size(), pipe))
-            output.append(buffer.data(), count);
-        if (::pclose(pipe) != 0) output.clear();
-    }
-    std::transform(output.begin(), output.end(), output.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    return output;
-}
+std::string run(const char* command) { return text::lower(text::commandOutput(command)); }
 
 bool contains(const std::string& text, std::string_view needle) { return text.find(needle) != std::string::npos; }
 }
@@ -49,23 +40,34 @@ static bool systemPrefersDark()
     if (contains(scheme, "prefer-light") || contains(scheme, "default")) return false;
     // Older or non-GNOME setups: fall back to the GTK theme name.
     if (const char* gtk = std::getenv("GTK_THEME")) {
-        std::string name(gtk);
-        std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-        return contains(name, "dark");
+        return contains(text::lower(gtk), "dark");
     }
     return contains(run("gsettings get org.gnome.desktop.interface gtk-theme 2>/dev/null"), "dark");
 }
 
+static float currentScale = 1.f;
+static void apply(bool dark);
+
+float scale() { return currentScale; }
+
+void setScale(const float value)
+{
+    currentScale = value > 0.f ? value : 1.f;
+    if (initialized) apply(currentDark);
+}
+
 static void apply(bool dark)
 {
-    if (dark) ImGui::StyleColorsDark(); else ImGui::StyleColorsLight();
     auto& style = ImGui::GetStyle();
+    style = ImGuiStyle();  // sizes start from the plain ones each time, so scaling them again does not add up
+    if (dark) ImGui::StyleColorsDark(); else ImGui::StyleColorsLight();
     style.WindowPadding = ImVec2(24,24);
     style.FramePadding = ImVec2(12,8);
     style.ItemSpacing = ImVec2(10,10);
     style.FrameRounding = 5;
     style.ChildRounding = 10;
     style.WindowRounding = 8;
+    style.ScaleAllSizes(currentScale);
     auto& c = style.Colors;
     if (dark) {
         current.window = ImVec4(.09f,.10f,.12f,1);
@@ -140,9 +142,23 @@ const char* modeName(Mode m) { return m == Mode::Auto ? "Auto" : m == Mode::Ligh
 
 Mode nextMode(Mode m) { return m == Mode::Auto ? Mode::Light : m == Mode::Light ? Mode::Dark : Mode::Auto; }
 
+namespace {
+std::future<bool> pendingScheme;
+}
+
 void refresh()
 {
-    if (currentMode == Mode::Auto) resolve();
+    if (currentMode == Mode::Auto && !pendingScheme.valid()) pendingScheme = std::async(std::launch::async, systemPrefersDark);
+}
+
+void poll()
+{
+    if (!pendingScheme.valid() || pendingScheme.wait_for(std::chrono::seconds(0)) != std::future_status::ready) return;
+    const bool dark = pendingScheme.get();
+    if (currentMode != Mode::Auto) return;  // the mode was chosen by hand while the answer was on its way
+    if (dark != currentDark || !initialized) apply(dark);
+    currentDark = dark;
+    initialized = true;
 }
 
 const Palette& palette()

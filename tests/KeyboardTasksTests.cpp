@@ -58,6 +58,7 @@ public:
     struct Entry {
         DeviceInfo info;
         std::unique_ptr<StorageTransport> keyboard;
+        std::string openError;  // when set, opening this interface fails with it
     };
 
     StorageTransport& add(const std::string& serial, const bool bluetooth = false, const bool writable = true)
@@ -84,8 +85,11 @@ public:
 
     std::unique_ptr<Transport> open(const DeviceInfo& interface) override
     {
-        for (const auto& entry : entries)
-            if (entry.info.path == interface.path) return std::make_unique<Connection>(*entry.keyboard, entry.info.bluetooth);
+        for (const auto& entry : entries) {
+            if (entry.info.path != interface.path) continue;
+            if (!entry.openError.empty()) throw std::runtime_error(entry.openError);
+            return std::make_unique<Connection>(*entry.keyboard, entry.info.bluetooth);
+        }
         throw std::runtime_error("no such interface");
     }
 
@@ -110,6 +114,8 @@ void scanReadsTheCurrentProfile()
     require(result.profile == 2 && result.bytes == keyboard.memory, "the current profile was not read");
     require(result.serial == "A" && result.path == "/dev/hidraw0", "the keyboard was not identified");
     require(contains(result.detail, "Profile 3"), "the profile on screen was not named");
+    // The fake keyboard does not answer the pad requests, and the line says so.
+    require(contains(result.detail, "Gesture pad state could not be read"), "pads that could not be read were not mentioned");
 }
 
 void scanReadsAnotherProfileAndLeavesTheKeyboardOnItsOwn()
@@ -137,6 +143,24 @@ void reconnectOnlyFindsTheConnection()
     require(result.bluetooth, "the connection type was not reported");
 }
 
+void reconnectBringsBackTheKeyboardThatWasRead()
+{
+    FakeAccess access;
+    access.add("A");
+    access.add("B");
+
+    // Nothing has been read yet, so any keyboard will do.
+    const auto any = hhkbs::app::scanKeyboard(access, std::nullopt, true, "");
+    require(any.status == "Connected" && any.path == "/dev/hidraw0", "a reconnect with nothing read should take the first keyboard");
+
+    const auto second = hhkbs::app::scanKeyboard(access, std::nullopt, true, "B");
+    require(second.status == "Connected" && second.path == "/dev/hidraw1", "the keyboard that was read was not found again");
+
+    const auto gone = hhkbs::app::scanKeyboard(access, std::nullopt, true, "C");
+    require(gone.status == "Connection failed" && gone.path.empty(), "another keyboard was taken for the one that was read");
+    require(contains(gone.detail, "not connected"), "the reason was not given");
+}
+
 void scanSaysWhyNothingWasFound()
 {
     FakeAccess none;
@@ -151,6 +175,20 @@ void scanSaysWhyNothingWasFound()
     other.add("A").productName = "Other";
     const auto result = hhkbs::app::scanKeyboard(other, std::nullopt, false, "");
     require(result.status == "Connection failed", "a device that is not an HHKB Studio was accepted");
+}
+
+void scanNamesTheFirstInterfaceThatFailed()
+{
+    FakeAccess access;
+    access.add("A");
+    access.add("A");
+    access.entries[0].openError = "first interface refused";
+    access.entries[1].openError = "timed out while communicating with the second";
+
+    const auto result = hhkbs::app::scanKeyboard(access, std::nullopt, false, "");
+
+    require(result.status == "Connection failed" && result.detail == "first interface refused",
+            "the reason given was not the first one: " + result.detail);
 }
 
 void scanOnlyReadsTheKeyboardThatWasRead()
@@ -272,7 +310,47 @@ void aFailedWriteIsReportedAndUndone()
 
     require(!result.ok && result.written.empty(), "a failed write was counted");
     require(contains(result.message, "Profile 1 was not written"), "the message does not say the profile was not written");
+    require(contains(result.message, "The previous content is saved as backup-"), "the message does not name the backup to recover from");
+    require(!contains(result.message, ".."), "the sentences of the message run together");
     require(keyboard.stored[0] == before && keyboard.currentProfile == 2, "the keyboard was not put back as it was");
+}
+
+void aWriteThatCannotBeCheckedIsUndoneAndSaysSo()
+{
+    FakeAccess access;
+    auto& keyboard = access.add("A");
+    const auto before = keyboard.stored[0];
+    keyboard.failNextReadAfterWrite = true;
+
+    const auto result = hhkbs::app::applyProfiles(access, {{0, patternProfile(4)}}, "A");
+
+    require(!result.ok && result.written.empty(), "a write that could not be checked was counted");
+    require(contains(result.message, "could not be checked") && contains(result.message, "restored"),
+            "the message does not say the write was undone: " + result.message);
+    require(keyboard.stored[0] == before, "the previous profile was not put back");
+}
+
+void theKeyboardSwitchedByHandBeforeTheWriteIsNotWritten()
+{
+    FakeAccess access;
+    auto& keyboard = access.add("A");
+    const auto before = keyboard.stored[0];
+    // Once the backup has been read and before anything is written, someone presses the keys that switch profiles.
+    keyboard.beforeRequest = [](StorageTransport& self, const hhkbs::device::Report& request) {
+        const bool profileRead = request[0] == 0x02 && request[1] == 0x11 && request[2] == 0x01;
+        if (profileRead && self.dataReads > 0 && self.writes == 0 && self.currentProfile == 0) {
+            self.stored[0] = self.memory;
+            self.currentProfile = 1;
+            self.memory = self.stored[1];
+        }
+    };
+
+    const auto result = hhkbs::app::applyProfiles(access, {{0, patternProfile(6)}}, "A");
+
+    require(!result.ok && result.written.empty(), "a profile was written although the keyboard had been switched");
+    require(keyboard.writes == 0, "something was written to the wrong profile");
+    require(contains(result.message, "active profile changed"), "the reason was not given: " + result.message);
+    require(keyboard.stored[0] == before, "the profile that was asked for was changed");
 }
 
 void aFailureStopsTheProfilesThatFollow()
@@ -345,7 +423,9 @@ int main()
         scanReadsTheCurrentProfile();
         scanReadsAnotherProfileAndLeavesTheKeyboardOnItsOwn();
         reconnectOnlyFindsTheConnection();
+        reconnectBringsBackTheKeyboardThatWasRead();
         scanSaysWhyNothingWasFound();
+        scanNamesTheFirstInterfaceThatFailed();
         scanOnlyReadsTheKeyboardThatWasRead();
         applyWritesTheProfileAndKeepsABackup();
         applyWritesSeveralProfilesInOrder();
@@ -354,6 +434,8 @@ int main()
         applyNeedsAUsbConnection();
         aWriteThatCouldNotBeUndoneIsStillCounted();
         aFailedWriteIsReportedAndUndone();
+        aWriteThatCannotBeCheckedIsUndoneAndSaysSo();
+        theKeyboardSwitchedByHandBeforeTheWriteIsNotWritten();
         aFailureStopsTheProfilesThatFollow();
         profilesAreReadFromTheRightKeyboard();
         profilesAreNotReadFromAnotherKeyboardOrOverBluetooth();

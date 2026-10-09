@@ -88,7 +88,7 @@ std::vector<KeyPosition> makeUsStudioLayout()
         KeyDefinition{25, "P", 1.0F, 0x0013},
         KeyDefinition{26, "[", 1.0F, 0x002F},
         KeyDefinition{27, "]", 1.0F, 0x0030},
-        KeyDefinition{29, "Delete", 1.5F, 0x004C},
+        KeyDefinition{29, "Delete", 1.5F, 0x002A},
     };
     appendRow(positions, row1, 1.0F);
 
@@ -136,9 +136,9 @@ std::vector<KeyPosition> makeUsStudioLayout()
     appendRow(positions, row4, 4.0F, 1.625F);
 
     constexpr std::array mouseButtons{
-        KeyDefinition{79, "Mouse L", 1.5F, 0x0000},
+        KeyDefinition{79, "Mouse L", 1.5F, 0x00F4},
         KeyDefinition{80, "Mouse / Fn2", 1.2F, 0x5102},
-        KeyDefinition{81, "Mouse R", 1.5F, 0x0000},
+        KeyDefinition{81, "Mouse R", 1.5F, 0x00F6},
     };
     appendRow(positions, mouseButtons, 5.25F, 5.4F);
 
@@ -183,23 +183,13 @@ std::vector<std::uint8_t> KeyboardLayout::usWindowsFactoryProfile()
     std::vector<std::uint8_t> bytes(Keymap::profileByteCount, 0);
 
     for (std::size_t layer = 0; layer < Keymap::layerCount; ++layer) {
-        for (const auto& position : usStudio()) {
-            setScanCode(bytes, layer, position.slot, position.defaultScanCode);
+        // What every key and gesture pad sends is in the layout; the one slot it has no key for sends Delete.
+        for (const auto* keys : {&usStudio(), &gesturePads()}) {
+            for (const auto& position : *keys) {
+                setScanCode(bytes, layer, position.slot, position.defaultScanCode);
+            }
         }
-
         setScanCode(bytes, layer, 28, 0x004C);
-        setScanCode(bytes, layer, 29, 0x002A);
-        setScanCode(bytes, layer, 79, 0x00F4);
-        setScanCode(bytes, layer, 80, 0x5102);
-        setScanCode(bytes, layer, 81, 0x00F6);
-        setScanCode(bytes, layer, 86, 0x0052);
-        setScanCode(bytes, layer, 87, 0x0051);
-        setScanCode(bytes, layer, 101, 0x0050);
-        setScanCode(bytes, layer, 102, 0x004F);
-        setScanCode(bytes, layer, 108, 0x5F8C);
-        setScanCode(bytes, layer, 109, 0x5F8D);
-        setScanCode(bytes, layer, 116, 0x00F9);
-        setScanCode(bytes, layer, 117, 0x00FA);
     }
 
     constexpr std::array fn1Overrides{

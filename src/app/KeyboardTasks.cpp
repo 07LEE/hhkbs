@@ -47,6 +47,13 @@ public:
     }
 };
 
+// `text` as a sentence, so that another can follow it.
+std::string sentence(std::string text)
+{
+    if (!text.empty() && text.back() != '.' && text.back() != '!' && text.back() != '?') text += '.';
+    return text;
+}
+
 }  // namespace
 
 KeyboardAccess& hidrawAccess()
@@ -63,7 +70,7 @@ ScanResult scanKeyboard(KeyboardAccess& access, const std::optional<std::uint16_
         const auto devices = access.interfaces();
         bool permission = false;
         bool otherKeyboard = false;  // a keyboard answered, but not the one that was read
-        std::string lastError;
+        std::string firstError;  // the first interface that failed says why; the ones after it often just time out
         for (const auto& item : devices) {
             if (!item.canReadWrite) { permission = true; continue; }
             try {
@@ -71,7 +78,9 @@ ScanResult scanKeyboard(KeyboardAccess& access, const std::optional<std::uint16_
                 hhkbs::device::HhkbStudioDevice device(*transport);
                 if (device.readProductName() != "HHKB-Studio") continue;
                 if (reconnect) {
-                    // Only bring the connection back; the profile is read when the user asks for it.
+                    // Only bring the connection back; the profile is read when the user asks for it. It has to be the
+                    // keyboard that was read, not another one that happens to be plugged in.
+                    if (!serial.empty() && device.readSerialNumber() != serial) { otherKeyboard = true; continue; }
                     result.path = item.path;
                     result.bluetooth = item.bluetooth;
                     for (std::size_t pad = 0; pad < result.pads.size(); ++pad) {
@@ -88,25 +97,28 @@ ScanResult scanKeyboard(KeyboardAccess& access, const std::optional<std::uint16_
                 result.serial = info.serialNumber;
                 result.path = item.path;
                 result.bluetooth = item.bluetooth;
+                bool padsUnread = false;
                 for (std::size_t pad = 0; pad < result.pads.size(); ++pad) {
-                    try { result.pads[pad] = device.padState(pad); } catch (const std::exception&) {}
+                    try { result.pads[pad] = device.padState(pad); } catch (const std::exception&) { padsUnread = true; }
                 }
                 result.status = "Connected";
                 result.detail = info.modelName + " / " + info.keyboardLayout +
                     " / Firmware " + info.firmwareVersion + " / Profile " + std::to_string(profile+1);
                 if (profile != info.currentProfile)
                     result.detail += " (keyboard is on Profile " + std::to_string(info.currentProfile+1) + ")";
+                // A pad that was not read shows as unknown; the line says why, instead of leaving it a mystery.
+                if (padsUnread) result.detail += " / Gesture pad state could not be read";
                 return result;
-            } catch (const std::exception& error) { lastError = error.what(); }
+            } catch (const std::exception& error) { if (firstError.empty()) firstError = error.what(); }
         }
         if (permission) {
             result.status = "Permission required";
-            result.detail = "Install packaging/60-hhkbs.rules as described in the README, then reconnect the keyboard.";
+            result.detail = "Install the 60-hhkbs.rules file as described in the README (it is in the release archive too), then reconnect the keyboard.";
         } else if (!devices.empty()) {
             result.status = "Connection failed";
             // Other interfaces of the same keyboard time out after this one answered; that must not hide the cause.
             if (otherKeyboard) result.detail = "The keyboard that was read is not connected. Read from the keyboard again.";
-            else result.detail = lastError.empty() ? "No configuration interface responded." : lastError;
+            else result.detail = firstError.empty() ? "No configuration interface responded." : firstError;
         }
     } catch (const std::exception& error) {
         result.status = "Connection failed";
@@ -155,18 +167,24 @@ ApplyResult applyProfiles(KeyboardAccess& access,
 
                     // Keep a copy of what the keyboard held; without it a failed write cannot be undone by hand.
                     const auto directory = hhkbs::keymap::backupDirectory();
-                    std::filesystem::create_directories(directory);
+                    hhkbs::keymap::ensureBackupDirectory(directory);
                     path = hhkbs::keymap::newBackupPath(directory, std::time(nullptr), profile);
                     hhkbs::keymap::writeProfile(path, hhkbs::keymap::Keymap(backup), false);
 
+                    // The backup took a moment, and the keyboard can be switched with its own keys meanwhile.
+                    device.requireTarget(profile, serial);
                     device.writeCurrentProfile(bytes, backup);
                     written = true;
                 });
             } catch (const std::exception& error) {
                 // The write can succeed and the keyboard still fail to return to its profile afterwards.
-                if (!written) throw std::runtime_error("Profile " + std::to_string(profile + 1) + " was not written: " + error.what());
+                if (!written) {
+                    // Without the name of the backup there would be nothing to recover from by hand.
+                    const std::string saved = path.empty() ? "" : " The previous content is saved as " + path.filename().string() + ".";
+                    throw std::runtime_error("Profile " + std::to_string(profile + 1) + " was not written: " + sentence(error.what()) + saved);
+                }
                 record();
-                throw std::runtime_error("Profile " + std::to_string(profile + 1) + " was written, but " + error.what());
+                throw std::runtime_error("Profile " + std::to_string(profile + 1) + " was written, but " + sentence(error.what()));
             }
             record();
         }
@@ -174,7 +192,9 @@ ApplyResult applyProfiles(KeyboardAccess& access,
         result.message = "Applied to " + listed(result.written) + ". The previous content was saved as " + backups + ".";
     } catch (const std::exception& error) {
         result.message = error.what();
-        if (!result.written.empty()) result.message += " Already written: " + listed(result.written) + ".";
+        if (!result.written.empty()) {
+            result.message += " Already written: " + listed(result.written) + ". Their previous content was saved as " + backups + ".";
+        }
     }
     return result;
 }

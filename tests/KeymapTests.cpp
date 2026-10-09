@@ -5,6 +5,7 @@
 #include "keymap/ScanCodeCatalog.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <exception>
 #include <iostream>
@@ -149,6 +150,30 @@ void factoryProfileContainsAllDefaultLayers()
     require(profile.scanCode(3, 0) == 0x0029, "Fn3 base default is incorrect");
 }
 
+void layoutAndCatalogAgree()
+{
+    // The layout says what each key sends out of the box, and the factory profile is built from it.
+    const Keymap factory(hhkbs::keymap::KeyboardLayout::usWindowsFactoryProfile());
+    for (const auto* keys : {&hhkbs::keymap::KeyboardLayout::usStudio(), &hhkbs::keymap::KeyboardLayout::gesturePads()}) {
+        for (const auto& position : *keys) {
+            require(factory.scanCode(0, position.slot) == position.defaultScanCode,
+                    "the layout's default for " + position.legend + " is not what the factory profile has");
+        }
+    }
+
+    // The catalog names every code once, so a list that came out short or doubled would show here.
+    std::vector<Keymap::ScanCode> seen;
+    for (const auto& entry : hhkbs::keymap::ScanCodeCatalog::entries()) {
+        require(!entry.label.empty() && !entry.category.empty(), "a catalog entry has no label or category");
+        require(std::find(seen.begin(), seen.end(), entry.code) == seen.end(), "a scan code is in the catalog twice: " + entry.label);
+        seen.push_back(entry.code);
+        require(hhkbs::keymap::ScanCodeCatalog::labelFor(entry.code) == entry.label, "a catalog label is not the one looked up for its code");
+    }
+    require(seen.size() > 100, "the catalog is far shorter than it should be");
+    for (const Keymap::ScanCode code : {0x5FA4, 0x5FA5, 0x5FA6, 0x5FA7})
+        require(hhkbs::keymap::ScanCodeCatalog::labelFor(code).starts_with("Pointer Speed"), "a pointer speed is missing from the catalog");
+}
+
 void tomlProfilesRoundTrip()
 {
     Keymap original(hhkbs::keymap::KeyboardLayout::demoProfile());
@@ -231,6 +256,24 @@ std::string refusal(const std::string& text)
 }
 
 bool rejected(const std::string& text) { return !refusal(text).empty(); }
+
+void unusualFilesAreHandled()
+{
+    Keymap original(hhkbs::keymap::KeyboardLayout::demoProfile());
+    const auto written = hhkbs::keymap::ProfileSerializer::toToml(original);
+    require(hhkbs::keymap::ProfileSerializer::fromToml("\xEF\xBB\xBF" + written).toBytes() == original.toBytes(),
+            "a profile saved with a byte order mark was not read");
+
+    // A crafted file of nothing but headers is refused at once, not after searching it over and over.
+    std::string headers;
+    for (int i = 0; i < 100000; ++i) headers += "[[layers]]";
+    const auto started = std::chrono::steady_clock::now();
+    require(rejected(headers), "a file of nothing but headers was accepted");
+    std::string oneLine;
+    for (int i = 0; i < 100000; ++i) oneLine += " [[layers]] ";
+    require(rejected(oneLine), "a long line of headers was accepted");
+    require(std::chrono::steady_clock::now() - started < std::chrono::seconds(2), "refusing a crafted file took far too long");
+}
 
 void malformedTomlIsRejected()
 {
@@ -348,8 +391,10 @@ int main()
         studioLayoutHasUniqueEditableSlots();
         gesturePadLayoutHasAllDirections();
         factoryProfileContainsAllDefaultLayers();
+        layoutAndCatalogAgree();
         tomlProfilesRoundTrip();
         tomlCommentsAndStringsAreNotSyntax();
+        unusualFilesAreHandled();
         malformedTomlIsRejected();
         tomlAcceptsTheFormsPeopleWrite();
         diffListsOnlyTheChangedKeys();

@@ -9,17 +9,23 @@ Unofficial HHKB Studio keymap editor for the US layout on Linux.
 
 ## Download
 
-Release builds will be available on [GitHub Releases](https://github.com/07LEE/hhkbs/releases).
+Download `hhkbs-<version>-linux-x86_64.tar.gz` from [GitHub Releases](https://github.com/07LEE/hhkbs/releases) and unpack it. Run `bin/hhkbs` from the unpacked folder; nothing needs to be installed except the device permissions below.
+
+HHKBS needs a Linux x86_64 desktop with an X server (X11, or Wayland through XWayland) and OpenGL 3.0. Two programs it calls are optional: `fc-match` from Fontconfig, which finds the interface font, and `xdg-open`, which the Backups window uses to open its folder. Names in Korean are shown when a font that has Hangul is installed, for example Noto Sans CJK.
+
+On a screen that shows everything larger, HHKBS follows the scale the desktop reports. Set `HHKBS_SCALE` (0.5 to 4) to choose another one, and `HHKBS_THEME` to `light` or `dark` to leave the desktop's colors alone.
 
 ## Device permissions
 
-If HHKBS reports a permission error, download [60-hhkbs.rules](packaging/60-hhkbs.rules). Run these commands from the folder containing the downloaded file, then reconnect the keyboard:
+If HHKBS reports a permission error, use [60-hhkbs.rules](packaging/60-hhkbs.rules); it is also in the release archive, next to `bin`. Run these commands from the folder containing the file, then reconnect the keyboard:
 
 ```bash
 sudo install -m 0644 60-hhkbs.rules /etc/udev/rules.d/60-hhkbs.rules
 sudo udevadm control --reload-rules
 sudo udevadm trigger
 ```
+
+The rule gives the user who is logged in at the computer access to every interface of the HHKB Studio, not only the one HHKBS talks to. That includes the one that carries what is typed on it, so a program running as that user could read it. Over Bluetooth the keyboard has a single interface for everything. Install the rule only on a computer where that is acceptable.
 
 ## Usage
 

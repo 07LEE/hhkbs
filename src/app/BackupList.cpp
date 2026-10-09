@@ -8,6 +8,7 @@ namespace hhkbs::app {
 
 void BackupList::reload()
 {
+    keymap::removeStrayFiles(directory_);
     entries = keymap::listBackups(directory_);
     choice.reset();
     tagShownFor.reset();
@@ -63,13 +64,12 @@ BackupList::CleanUp BackupList::deleteSurplus()
 
 BackupList::Saved BackupList::save(const keymap::Keymap& work, const std::uint16_t profile, const std::string& tag) const
 {
-    std::filesystem::create_directories(directory_);
+    keymap::ensureBackupDirectory(directory_);
     Saved saved{keymap::newBackupPath(directory_, std::time(nullptr), profile), {}};
     keymap::writeProfile(saved.path, work, false);
     if (!tag.empty()) {
         try {
-            for (const auto& entry : keymap::listBackups(directory_))
-                if (entry.path == saved.path) keymap::setBackupTag(directory_, entry, tag);
+            keymap::setBackupTag(directory_, keymap::BackupEntry{saved.path, profile, {}, {}}, tag);
         } catch (const std::exception& error) { saved.tagError = error.what(); }
     }
     return saved;

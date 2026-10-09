@@ -13,6 +13,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -37,6 +38,33 @@ void require(const bool condition, const std::string& message)
     if (!condition) {
         throw std::runtime_error(message);
     }
+}
+
+using hhkbs::device::DeviceError;
+using hhkbs::device::DeviceErrorCode;
+
+// For a call that is expected to raise: the check passes when something was raised.
+template<typename Raised>
+void require(const std::optional<Raised>& error, const std::string& message)
+{
+    require(error.has_value(), message);
+}
+
+// What a call raises, when it raises an exception of type `Exception`; nothing when it raises none of that type.
+template<typename Exception, typename Function>
+std::optional<Exception> raised(Function&& function)
+{
+    try {
+        function();
+    } catch (const Exception& error) {
+        return error;
+    }
+    return std::nullopt;
+}
+
+bool mentions(const std::optional<DeviceError>& error, const char* text)
+{
+    return error && std::string(error->what()).find(text) != std::string::npos;
 }
 
 class FakeTransport final : public Transport {
@@ -122,14 +150,9 @@ void failedWriteRestoresBackup()
     const auto backup = device.readCurrentProfile();
 
     transport.failWriteNumber = 5;
-    bool threw = false;
-    try {
-        device.writeCurrentProfile(patternProfile(3), backup);
-    } catch (const hhkbs::device::DeviceError&) {
-        threw = true;
-    }
+    const auto error = raised<DeviceError>([&] { device.writeCurrentProfile(patternProfile(3), backup); });
 
-    require(threw, "an interrupted write was not reported");
+    require(error.has_value(), "an interrupted write was not reported");
     require(transport.memory == backup, "backup was not restored after a failed write");
 }
 
@@ -142,88 +165,82 @@ void mismatchedReadBackRestoresBackup()
     // The profile is stored wrongly, but the restore that follows is kept as sent.
     constexpr std::size_t profileWrites = (Keymap::profileByteCount + 25) / 26;
     transport.corruptUntilWrite = profileWrites;
-    bool threw = false;
-    std::string message;
-    try {
-        device.writeCurrentProfile(patternProfile(3), backup);
-    } catch (const hhkbs::device::DeviceError& error) {
-        threw = error.code() == hhkbs::device::DeviceErrorCode::Protocol;
-        message = error.what();
-    }
+    const auto error = raised<DeviceError>([&] { device.writeCurrentProfile(patternProfile(3), backup); });
 
-    require(threw, "a read-back mismatch was not reported");
+    require(error && error->code() == DeviceErrorCode::Protocol, "a read-back mismatch was not reported");
     require(transport.memory == backup, "the previous profile was not put back after a mismatch");
-    require(message.find("The previous profile was restored.") != std::string::npos,
-            "the report does not say the profile was restored");
+    require(mentions(error, "The previous profile was restored."), "the report does not say the profile was restored");
 
     // When even the restore is stored wrongly, the report says so.
     StorageTransport stubborn;
     HhkbStudioDevice other(stubborn);
     stubborn.corruptUntilWrite = 2 * profileWrites;
-    message.clear();
-    try {
-        other.writeCurrentProfile(patternProfile(3), other.readCurrentProfile());
-    } catch (const hhkbs::device::DeviceError& error) {
-        message = error.what();
-    }
-    require(message.find("could not be restored") != std::string::npos,
-            "a restore that failed was reported as done");
+    const auto unrestored = raised<DeviceError>([&] { other.writeCurrentProfile(patternProfile(3), other.readCurrentProfile()); });
+    require(mentions(unrestored, "could not be restored"), "a restore that failed was reported as done");
+}
+
+void readBackFailureRestoresTheBackup()
+{
+    StorageTransport transport;
+    HhkbStudioDevice device(transport);
+    const auto backup = device.readCurrentProfile();
+    transport.failNextReadAfterWrite = true;
+
+    const auto error = raised<DeviceError>([&] { device.writeCurrentProfile(patternProfile(3), backup); });
+
+    require(error && error->code() == DeviceErrorCode::InputOutput, "a read-back that failed was not reported as a failure of the keyboard");
+    require(transport.memory == backup, "the previous profile was not put back when the check could not be done");
+    require(mentions(error, "could not be checked") && mentions(error, "was restored"),
+            "the report does not say the write could not be checked and was undone");
+
+    // When the check keeps failing, the restore cannot be confirmed either, and the report says so.
+    StorageTransport stubborn;
+    HhkbStudioDevice other(stubborn);
+    stubborn.failReadsAfterWrite = true;
+    const auto unconfirmed = raised<DeviceError>([&] { other.writeCurrentProfile(patternProfile(3), other.readCurrentProfile()); });
+    require(mentions(unconfirmed, "could not be restored") && mentions(unconfirmed, "saved backup"),
+            "an unconfirmed restore was reported as done, or the backup was not mentioned");
+}
+
+void anActiveProfileOutOfRangeIsRejected()
+{
+    StorageTransport transport;
+    transport.currentProfile = 7;
+    HhkbStudioDevice device(transport);
+
+    const auto error = raised<DeviceError>([&] { static_cast<void>(device.activeProfile()); });
+    require(error && error->code() == DeviceErrorCode::Protocol, "a profile number the keyboard does not have was accepted");
+    transport.currentProfile = 3;
+    require(device.activeProfile() == 3, "the last profile was refused");
 }
 
 void writeTargetIsChecked()
 {
     StorageTransport wrongProfile;
     HhkbStudioDevice device(wrongProfile);
-    bool threw = false;
-    try {
-        device.requireTarget(1, "serial");
-    } catch (const hhkbs::device::DeviceError&) {
-        threw = true;
-    }
-    require(threw, "a changed active profile was not rejected");
+    require(raised<DeviceError>([&] { device.requireTarget(1, "serial"); }), "a changed active profile was not rejected");
 
     StorageTransport wrongDevice;
     wrongDevice.productName = "Other";
     HhkbStudioDevice other(wrongDevice);
-    threw = false;
-    try {
-        other.requireTarget(2, "serial");
-    } catch (const hhkbs::device::DeviceError&) {
-        threw = true;
-    }
-    require(threw, "a non-HHKB device was not rejected");
+    require(raised<DeviceError>([&] { other.requireTarget(2, "serial"); }), "a non-HHKB device was not rejected");
 
     // A second keyboard on the same profile is told apart by its serial number.
     StorageTransport otherKeyboard;
     otherKeyboard.serialNumber = "other-serial";
     HhkbStudioDevice sibling(otherKeyboard);
-    threw = false;
-    try {
-        sibling.requireTarget(2, "serial");
-    } catch (const hhkbs::device::DeviceError&) {
-        threw = true;
-    }
-    require(threw, "a keyboard with another serial number was not rejected");
+    require(raised<DeviceError>([&] { sibling.requireTarget(2, "serial"); }), "a keyboard with another serial number was not rejected");
 
     StorageTransport unknownSerial;
     HhkbStudioDevice unknown(unknownSerial);
-    threw = false;
-    try {
-        unknown.requireTarget(2, "");
-    } catch (const hhkbs::device::DeviceError&) {
-        threw = true;
-    }
-    require(threw, "a target without a known serial number was accepted");
+    require(raised<DeviceError>([&] { unknown.requireTarget(2, ""); }), "a target without a known serial number was accepted");
 
+    // What is written has to be exactly one profile long, and so does the backup to go back to; nothing is sent otherwise.
     StorageTransport shortProfile;
     HhkbStudioDevice shortDevice(shortProfile);
-    threw = false;
-    try {
-        shortDevice.writeCurrentProfile({1, 2, 3}, patternProfile(0));
-    } catch (const hhkbs::device::DeviceError&) {
-        threw = true;
-    }
-    require(threw, "a short profile was accepted");
+    require(raised<DeviceError>([&] { shortDevice.writeCurrentProfile({1, 2, 3}, patternProfile(0)); }), "a short profile was accepted");
+    require(raised<DeviceError>([&] { shortDevice.writeCurrentProfile(patternProfile(1), {1, 2, 3}); }),
+            "a short backup was accepted, and there would be nothing to go back to");
     require(shortProfile.writes == 0, "a rejected profile was still sent");
 }
 
@@ -244,14 +261,7 @@ void invalidProfileSwitchIsRejectedBeforeSending()
     StorageTransport transport;
     HhkbStudioDevice device(transport);
 
-    bool threw = false;
-    try {
-        device.switchProfile(4);
-    } catch (const std::invalid_argument&) {
-        threw = true;
-    }
-
-    require(threw, "an out-of-range profile was accepted");
+    require(raised<std::invalid_argument>([&] { device.switchProfile(4); }), "an out-of-range profile was accepted");
     require(transport.switches == 0, "an invalid profile switch was still sent");
 }
 
@@ -260,24 +270,23 @@ void unconfirmedProfileSwitchIsReported()
     StorageTransport ignored;
     ignored.ignoreSwitch = true;
     HhkbStudioDevice device(ignored);
-    bool threw = false;
-    try {
-        device.switchProfile(0);
-    } catch (const hhkbs::device::DeviceError& error) {
-        threw = error.code() == hhkbs::device::DeviceErrorCode::Protocol;
-    }
-    require(threw, "a switch the keyboard ignored was not reported");
+    const auto error = raised<DeviceError>([&] { device.switchProfile(0); });
+    require(error && error->code() == DeviceErrorCode::Protocol, "a switch the keyboard ignored was not reported");
 
     StorageTransport shortAnswer;
     shortAnswer.switchResponseCount = 1;
     HhkbStudioDevice shortDevice(shortAnswer);
-    threw = false;
-    try {
-        shortDevice.switchProfile(0);
-    } catch (const hhkbs::device::DeviceError&) {
-        threw = true;
-    }
-    require(threw, "a missing switch response was not reported");
+    require(raised<DeviceError>([&] { shortDevice.switchProfile(0); }), "a missing switch response was not reported");
+
+    // Both answers can say the profile was taken while a fresh read of the active profile says otherwise; that one counts.
+    StorageTransport doubting;
+    HhkbStudioDevice doubtful(doubting);
+    doubting.beforeRequest = [](StorageTransport& self, const hhkbs::device::Report& request) {
+        const bool profileRead = request[0] == 0x02 && request[1] == 0x11 && request[2] == 0x01;
+        if (profileRead && self.switches > 0) self.currentProfile = 2;  // after the switch, it reports where it was
+    };
+    const auto unconfirmed = raised<DeviceError>([&] { doubtful.switchProfile(0); });
+    require(mentions(unconfirmed, "not on the requested profile"), "a switch that the final read does not bear out was accepted");
 }
 
 void otherProfileIsReadAndActiveProfileIsKept()
@@ -321,14 +330,9 @@ void failedActionStillRestoresActiveProfile()
     StorageTransport transport;
     HhkbStudioDevice device(transport);
 
-    bool threw = false;
-    try {
-        device.runOnProfile(1, [] { throw std::runtime_error("boom"); });
-    } catch (const std::runtime_error& error) {
-        threw = std::string(error.what()) == "boom";
-    }
+    const auto error = raised<std::runtime_error>([&] { device.runOnProfile(1, [] { throw std::runtime_error("boom"); }); });
 
-    require(threw, "the action's own error was not propagated");
+    require(error && std::string(error->what()) == "boom", "the action's own error was not propagated");
     require(device.activeProfile() == 2, "the active profile was not restored after an error");
 }
 
@@ -338,15 +342,17 @@ void unreturnableProfileIsReported()
     transport.ignoreSwitchNumber = 2;
     HhkbStudioDevice device(transport);
 
-    bool threw = false;
-    try {
-        device.runOnProfile(1, [] {});
-    } catch (const hhkbs::device::DeviceError& error) {
-        threw = std::string(error.what()).find("could not be returned to profile 3")
-            != std::string::npos;
-    }
+    const auto error = raised<DeviceError>([&] { device.runOnProfile(1, [] {}); });
 
-    require(threw, "a keyboard left on another profile was not reported");
+    require(mentions(error, "could not be returned to profile 3"), "a keyboard left on another profile was not reported");
+
+    // When the action failed too, the report has both: why it failed, and that the keyboard was left elsewhere.
+    StorageTransport both;
+    both.ignoreSwitchNumber = 2;
+    HhkbStudioDevice twice(both);
+    const auto combined = raised<DeviceError>([&] { twice.runOnProfile(1, [] { throw std::runtime_error("the action failed"); }); });
+    require(mentions(combined, "the action failed") && mentions(combined, "could not be returned to profile 3"),
+            "the reason the action failed was lost when the keyboard could not be returned either");
 }
 
 void writeSurvivesFailedReturnToProfile()
@@ -357,18 +363,15 @@ void writeSurvivesFailedReturnToProfile()
     const auto profile = patternProfile(9);
 
     bool written = false;
-    bool threw = false;
-    try {
+    const auto error = raised<DeviceError>([&] {
         device.runOnProfile(1, [&] {
             device.writeCurrentProfile(profile, device.readCurrentProfile());
             written = true;
         });
-    } catch (const hhkbs::device::DeviceError&) {
-        threw = true;
-    }
+    });
 
     // The error does not mean the write failed; callers have to track that themselves.
-    require(threw, "a keyboard left on another profile was not reported");
+    require(error.has_value(), "a keyboard left on another profile was not reported");
     require(written, "the write did not finish before the return failed");
     require(transport.memory == profile, "the written profile was lost");
 }
@@ -536,6 +539,35 @@ void profileIsReadInBoundedChunks()
     require(transport.requests.back()[3] == 24, "final chunk length is incorrect");
 }
 
+void onlyConfigurationInterfacesAreKept()
+{
+    const auto root = std::filesystem::temp_directory_path()
+        / ("hhkbs-interfaces-" + std::to_string(::getpid()));
+    std::filesystem::remove_all(root);
+    const auto interface = [&](const std::string& name, const std::vector<std::uint8_t>* descriptor) {
+        std::filesystem::create_directories(root / name / "device");
+        std::ofstream(root / name / "device" / "uevent") << "HID_ID=0003:000004FE:00000016\nHID_NAME=HHKB-Studio\n";
+        if (descriptor) {
+            std::ofstream file(root / name / "device" / "report_descriptor", std::ios::binary);
+            file.write(reinterpret_cast<const char*>(descriptor->data()), static_cast<std::streamsize>(descriptor->size()));
+        }
+    };
+    const std::vector<std::uint8_t> keys{0x05, 0x01, 0x09, 0x06, 0xA1, 0x01, 0x85, 0x01, 0xC0};
+    const std::vector<std::uint8_t> settings{0x06, 0x60, 0xFF, 0x09, 0x61, 0xA1, 0x01, 0xC0};
+    const std::vector<std::uint8_t> otherVendor{0x06, 0x31, 0xFF, 0x09, 0x74, 0xA1, 0x01, 0xC0};
+    interface("hidraw-a-keys", &keys);
+    interface("hidraw-b-settings", &settings);
+    interface("hidraw-c-other", &otherVendor);
+    interface("hidraw-d-unreadable", nullptr);
+
+    const auto interfaces = hhkbs::device::DeviceDiscovery::findHhkbStudioInterfaces(root);
+    std::filesystem::remove_all(root);
+
+    require(interfaces.size() == 2, "the interfaces that cannot take configuration requests were kept");
+    require(interfaces[0].path == "/dev/hidraw-b-settings", "the configuration interface was dropped");
+    require(interfaces[1].path == "/dev/hidraw-d-unreadable", "an interface whose descriptor cannot be read should be kept");
+}
+
 void supportedInterfacesAreDiscovered()
 {
     const auto root = std::filesystem::temp_directory_path()
@@ -669,10 +701,13 @@ int main()
         protocolPacketsAreEncodedAndDecoded();
         profileIsReadInBoundedChunks();
         supportedInterfacesAreDiscovered();
+        onlyConfigurationInterfacesAreKept();
         writePacketIsEncoded();
         profileWriteIsVerifiedByReadBack();
         failedWriteRestoresBackup();
         mismatchedReadBackRestoresBackup();
+        readBackFailureRestoresTheBackup();
+        anActiveProfileOutOfRangeIsRejected();
         writeTargetIsChecked();
         writeSurvivesFailedReturnToProfile();
         profileSwitchPacketIsEncoded();

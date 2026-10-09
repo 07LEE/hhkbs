@@ -7,7 +7,6 @@
 #include "keymap/KeyboardLayout.h"
 #include "keymap/ProfileFiles.h"
 #include "keymap/ScanCodeCatalog.h"
-#include "keymap/ProfileSerializer.h"
 #include <imgui.h>
 #include <algorithm>
 #include <chrono>
@@ -17,7 +16,6 @@
 #include <ctime>
 #include <exception>
 #include <functional>
-#include <unistd.h>
 #include <spawn.h>
 #include <sys/wait.h>
 #include <utility>
@@ -38,28 +36,20 @@ std::string keyName(std::size_t slot)
     return "Key " + std::to_string(slot);
 }
 
-// Runs xdg-open in the background. The path is passed as an argument, never spliced into a command line.
-bool openFolder(const std::filesystem::path& folder)
+enum class OpenResult { Opened, NoOpener, Failed };
+
+// Runs xdg-open in the background. The path is passed as an argument, never spliced into a command line. The shell
+// that would run it also says whether it exists, so there is one place that looks.
+OpenResult openFolder(const std::filesystem::path& folder)
 {
-    const std::string command = "xdg-open \"$1\" >/dev/null 2>&1 &";
+    const std::string command = "command -v xdg-open >/dev/null 2>&1 || exit 127; xdg-open \"$1\" >/dev/null 2>&1 &";
     const char* argv[] = {"sh", "-c", command.c_str(), "sh", folder.c_str(), nullptr};
     pid_t child = 0;
-    if (::posix_spawnp(&child, "sh", nullptr, nullptr, const_cast<char* const*>(argv), environ) != 0) return false;
+    if (::posix_spawnp(&child, "sh", nullptr, nullptr, const_cast<char* const*>(argv), environ) != 0) return OpenResult::Failed;
     int status = 0;
-    return ::waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 0;
-}
-
-bool commandExists(const char* name)
-{
-    const char* path = std::getenv("PATH");
-    if (!path) return false;
-    std::string list = path;
-    for (std::size_t start = 0; start <= list.size();) {
-        const auto end = std::min(list.find(':', start), list.size());
-        if (::access((list.substr(start, end - start) + "/" + name).c_str(), X_OK) == 0) return true;
-        start = end + 1;
-    }
-    return false;
+    if (::waitpid(child, &status, 0) != child || !WIFEXITED(status)) return OpenResult::Failed;
+    if (WEXITSTATUS(status) == 127) return OpenResult::NoOpener;
+    return WEXITSTATUS(status) == 0 ? OpenResult::Opened : OpenResult::Failed;
 }
 
 }  // namespace
@@ -81,16 +71,34 @@ MainWindow::MainWindow(bool demoMode)
     } else beginScan();
 }
 
-void MainWindow::beginScan(std::optional<std::uint16_t> target, const bool reconnect)
+void MainWindow::beginScan(std::optional<std::uint16_t> target, const bool reconnect, const bool anyKeyboard,
+                           const bool quiet)
 {
-    if (scan_.valid()) return;
+    if (scan_.valid()) {
+        if (!reconnect && !quiet) message_ = "The keyboard is still being checked. Try again in a moment.";
+        return;
+    }
     reconnectScan_ = reconnect;
-    if (!reconnect) {
+    if (!reconnect && !quiet) {
         status_ = "Searching...";
         message_ = "Checking available HID interfaces...";
     }
-    // A profile chosen on the keyboard that is on screen is read from that keyboard, not from whichever answers first.
-    scan_ = std::async(std::launch::async, hhkbs::app::scanKeyboard, std::ref(hhkbs::app::hidrawAccess()), target, reconnect, target ? work_.keyboardSerial : std::string());
+    // A profile chosen on the keyboard that is on screen is read from that keyboard, not from whichever answers first,
+    // and bringing the connection back means the same keyboard. Reading again on request takes whichever keyboard
+    // answers, since that is how a different one is picked up.
+    const std::string serial = reconnect || (target && !anyKeyboard) ? work_.keyboardSerial : std::string();
+    scan_ = std::async(std::launch::async, hhkbs::app::scanKeyboard, std::ref(hhkbs::app::hidrawAccess()), target, reconnect, serial);
+}
+
+// The connection to the keyboard that answered a scan: where it is, how it is reached, and the pads it reported.
+void MainWindow::attachKeyboard(const ScanResult& result)
+{
+    disconnected_ = false;
+    bluetooth_ = result.bluetooth;
+    pads_.start(result.path);
+    wasListening_ = true;
+    for (std::size_t pad = 0; pad < result.pads.size(); ++pad)
+        if (result.pads[pad]) pads_.set(pad, *result.pads[pad]);
 }
 
 void MainWindow::pollScan()
@@ -105,29 +113,30 @@ void MainWindow::pollScan()
                 return;
             }
             // The editor content is left alone, edited or not.
-            disconnected_ = false;
-            bluetooth_ = result.bluetooth;
+            attachKeyboard(result);
             status_ = result.status;
             message_.clear();
-            pads_.start(result.path);
-            wasListening_ = true;
-            for (std::size_t pad = 0; pad < result.pads.size(); ++pad)
-                if (result.pads[pad]) pads_.set(pad, *result.pads[pad]);
+            return;
+        }
+        if (!result.bytes.empty() && work_.keyboardChanged(result.serial) && work_.stashedUnsaved()) {
+            // The work put aside belongs to the keyboard that was read before; showing the new one would lose it.
+            status_ = "Different keyboard";
+            message_ = "Another keyboard is connected, but " + work_.stashedUnsavedList() +
+                       " hold unsaved work from the previous one. Save or discard it, then read again.";
             return;
         }
         status_ = result.status;
         message_ = result.detail;
         if (!result.bytes.empty()) {
             work_.adoptKeyboardProfile(result.profile.value_or(0), result.bytes, result.serial);
-            disconnected_ = false;
-            if (!result.path.empty()) {
-                pads_.start(result.path);
-                wasListening_ = true;
-                for (std::size_t pad = 0; pad < result.pads.size(); ++pad)
-                    if (result.pads[pad]) pads_.set(pad, *result.pads[pad]);
-            }
+            attachKeyboard(result);
             work_.summary = result.detail;
             message_.clear();
+        } else if (result.status == "No device" || result.status == "Permission required") {
+            // Nothing to talk to yet: keep an eye on the interfaces and pick the keyboard up when it shows.
+            disconnected_ = true;
+            seenPaths_.clear();
+            nextProbe_ = std::chrono::steady_clock::now() + std::chrono::seconds(1);
         }
     } catch (const std::exception& error) { status_ = "Profile error"; message_ = error.what(); }
 }
@@ -155,8 +164,9 @@ void MainWindow::pollPadChange()
 
 void MainWindow::pollConnection()
 {
-    // Writes reopen the interface and may briefly disturb the listener, so only judge while nothing is running.
-    if (busy()) return;
+    // Writes reopen the interface and may briefly disturb the listener, so only judge while nothing is running. A probe
+    // that is running when a dialog's button is pressed would make that press do nothing, so none starts under a dialog.
+    if (busy() || dialog_ != Dialog::None) return;
     if (disconnected_) {
         const auto now = std::chrono::steady_clock::now();
         if (now < nextProbe_) return;
@@ -168,7 +178,9 @@ void MainWindow::pollConnection()
         if (paths != seenPaths_) { seenPaths_ = paths; settledAt_ = now + std::chrono::seconds(3); }
         if (paths.empty() || now < settledAt_) return;
         nextProbe_ = now + std::chrono::seconds(2);
-        beginScan(work_.selected, true);
+        // With nothing on screen yet the keyboard is read, as at startup; otherwise only the connection comes back.
+        if (work_.loaded) beginScan(work_.selected, true);
+        else beginScan(std::nullopt, false, false, true);
         return;
     }
     if (!wasListening_ || pads_.listening()) return;
@@ -182,7 +194,8 @@ void MainWindow::pollConnection()
 
 void MainWindow::beginApply()
 {
-    if (busy() || demo_ || !work_.loaded) return;
+    if (demo_ || !work_.loaded) return;
+    if (busy()) { message_ = "The keyboard is busy. Apply again in a moment."; return; }
     std::vector<std::pair<std::uint16_t, std::vector<std::uint8_t>>> jobs;
     for (std::uint16_t i = 0; i < 4; ++i)
         if (applyPick_[i])
@@ -233,9 +246,25 @@ void MainWindow::pollPreview()
     previewDone_ = true;
 }
 
-void MainWindow::requestClose()
+void MainWindow::requestClose() { closeRequested_ = true; }
+
+void MainWindow::reportError(const std::string& text)
 {
-    if (busy()) { message_ = "Please wait for the keyboard operation to finish before closing."; return; }
+    status_ = "Error";
+    message_ = text;
+}
+
+// A request to close waits for whatever is running on the keyboard, which is never interrupted, and is then asked
+// about unsaved work like any other close. A dialog that is open has the window's attention, so the request is let go.
+void MainWindow::pollClose()
+{
+    if (!closeRequested_) return;
+    if (busy()) {
+        // The warning not to unplug the keyboard stays up while it is being written.
+        if (!apply_.valid()) message_ = "Closing as soon as the keyboard operation is done.";
+        return;
+    }
+    closeRequested_ = false;
     if (dialog_ == Dialog::None) request(Action::Close);
 }
 // Each profile keeps its own work: leaving one for another puts it aside and shows the other's, which is read from
@@ -249,32 +278,51 @@ void MainWindow::selectProfile(std::uint16_t profile)
         message_.clear();
         return;
     }
+    if (work_.readWouldDiscard(profile)) {
+        // What is on screen did not come from the keyboard, so reading replaces it: unsaved edits get their chance.
+        pendingProfile_ = profile;
+        request(Action::SelectProfile);
+        return;
+    }
     beginScan(profile);
 }
 void MainWindow::request(Action action)
 {
     // Closing loses the work on every profile; the other actions only replace the one on screen.
-    if (action == Action::Close ? work_.anyUnsaved() : work_.unsaved()) {
-        if (action == Action::Close && work_.showFirstUnsaved()) message_.clear();
-        pending_ = action;
-        dialog_ = Dialog::Unsaved;
-    }
+    if (action == Action::Close ? work_.anyUnsaved() : work_.unsaved()) openUnsaved(action);
     else perform(action);
+}
+// Asks what to do with the unsaved work before `action`. When closing, the profile that has some is brought on screen.
+void MainWindow::openUnsaved(Action action)
+{
+    if (action == Action::Close && work_.showFirstUnsaved()) message_.clear();
+    pending_ = action;
+    dialogError_.clear();
+    dialog_ = Dialog::Unsaved;
 }
 void MainWindow::perform(Action action)
 {
-    if (action == Action::Read) beginScan();
+    // Reading again with unsaved edits left on screen (they were not saved, and the choice was to go on) shows the
+    // same profile from the keyboard; otherwise it follows the profile the keyboard is on.
+    if (action == Action::Read) beginScan(work_.unsaved() ? work_.selected : std::nullopt, false, true);
+    else if (action == Action::SelectProfile) {
+        if (const auto profile = std::exchange(pendingProfile_, std::nullopt)) beginScan(*profile);
+    }
+    else if (action == Action::Discard) {
+        work_.keymap.reset();
+        work_.savedBytes = work_.keymap.toBytes();  // it is the keyboard's content again, so there is nothing left to lose
+    }
     else if (action == Action::LoadFile) {
-        if (!importFile(std::exchange(pendingFile_, {}))) message_ = dialogError_;
+        if (!importFile(std::exchange(pendingFile_, {}))) { message_ = dialogError_; dialogError_.clear(); }
     }
     else if (action == Action::LoadBackup && pendingBackup_) {
         const auto entry = *pendingBackup_;
         pendingBackup_.reset();
-        if (!loadBackup(entry)) message_ = dialogError_;
+        if (!loadBackup(entry)) { message_ = dialogError_; dialogError_.clear(); }
     }
     else if (action == Action::Close) {
         // After saving one profile, the next one with unsaved work is asked about, until none is left.
-        if (work_.anyUnsaved()) { if (work_.showFirstUnsaved()) message_.clear(); pending_ = Action::Close; dialog_ = Dialog::Unsaved; }
+        if (work_.anyUnsaved()) openUnsaved(Action::Close);
         else close_ = true;
     }
 }
@@ -293,12 +341,7 @@ void MainWindow::requestImport(const std::filesystem::path& path)
 bool MainWindow::importFile(const std::filesystem::path& path)
 {
     try {
-        auto profile = hhkbs::keymap::readProfile(path);
-        work_.keymap = std::move(profile);
-        work_.useKeyboardAsReference();
-        work_.savedBytes = work_.keymap.toBytes();
-        work_.loaded = true;
-        work_.summary = "Imported " + path.filename().string();
+        work_.loadContent(hhkbs::keymap::readProfile(path), "Imported " + path.filename().string());
         status_ = "Imported profile";
         message_.clear();
         directory_ = path.parent_path();
@@ -337,6 +380,7 @@ void MainWindow::openApply()
 void MainWindow::openBackups(bool manage)
 {
     backupList_.reload();
+    filesDir_.clear();  // the Import tab reads its folder again
     confirmDelete_ = false;
     dialogError_.clear();
     selectTab_ = manage ? BackupTab::Manage : BackupTab::Restore;
@@ -351,12 +395,8 @@ void MainWindow::requestLoadBackup(const hhkbs::keymap::BackupEntry& entry)
 bool MainWindow::loadBackup(const hhkbs::keymap::BackupEntry& entry)
 {
     try {
-        auto profile = hhkbs::keymap::readProfile(entry.path);
-        work_.keymap = std::move(profile);
-        work_.useKeyboardAsReference();
-        work_.savedBytes = work_.keymap.toBytes();
-        work_.loaded = true;
-        work_.summary = std::string("Backup ") + (entry.tag.empty() ? "" : "\"" + entry.tag + "\" ") + "from " + entry.timestamp;
+        work_.loadContent(hhkbs::keymap::readProfile(entry.path),
+                          std::string("Backup ") + (entry.tag.empty() ? "" : "\"" + entry.tag + "\" ") + "from " + entry.timestamp);
         status_ = "Loaded backup";
         message_.clear();
         finishDialog();
@@ -366,23 +406,27 @@ bool MainWindow::loadBackup(const hhkbs::keymap::BackupEntry& entry)
 }
 void MainWindow::openBackupFolder()
 {
-    if (!commandExists("xdg-open"))
-        dialogError_ = "xdg-open was not found. Open " + hhkbs::keymap::backupDirectory().string() + " yourself.";
-    else if (!openFolder(hhkbs::keymap::backupDirectory())) dialogError_ = "Could not open the folder.";
-    else dialogError_.clear();
+    switch (openFolder(backupList_.directory())) {
+    case OpenResult::NoOpener:
+        dialogError_ = "xdg-open was not found. Open " + backupList_.directory().string() + " yourself.";
+        break;
+    case OpenResult::Failed: dialogError_ = "Could not open the folder."; break;
+    case OpenResult::Opened: dialogError_.clear(); break;
+    }
 }
 // The list fills the dialog down to what sits under it (`belowList`), and an error message under the list takes its
 // own height from the list. So nothing under the list ever floats away from it, whatever the dialog shows.
 void MainWindow::drawBackupList(const float belowList)
 {
-    const auto folder = hhkbs::keymap::backupDirectory();
+    const auto& folder = backupList_.directory();
     ImGui::AlignTextToFramePadding();
     ImGui::TextDisabled("%s", folder.c_str());
     // The button that opens the folder sits on the line that names it.
     const auto& style = ImGui::GetStyle();
     const float width = ImGui::CalcTextSize("Open folder").x + style.FramePadding.x * 2;
     ImGui::SameLine(ImGui::GetWindowWidth() - style.WindowPadding.x - width);
-    ImGui::BeginDisabled(!std::filesystem::is_directory(folder));
+    std::error_code folderError;
+    ImGui::BeginDisabled(!std::filesystem::is_directory(folder, folderError));
     if (ImGui::Button("Open folder")) openBackupFolder();
     ImGui::EndDisabled();
     const float errorHeight = dialogError_.empty() ? 0.f
@@ -392,7 +436,7 @@ void MainWindow::drawBackupList(const float belowList)
     if (backupList_.entries.empty()) ImGui::TextDisabled("No backups yet. One is saved before every apply, or press Save.");
     // A table: the date it was saved (dimmed) and the tag (bright, blank when there is none).
     if (!backupList_.entries.empty() && ImGui::BeginTable("BackupRows", 2, ImGuiTableFlags_ScrollY | ImGuiTableFlags_RowBg)) {
-        ImGui::TableSetupColumn("Saved", ImGuiTableColumnFlags_WidthFixed, ImGui::CalcTextSize("0000-00-00 00:00:00").x + 24.f);
+        ImGui::TableSetupColumn("Saved", ImGuiTableColumnFlags_WidthFixed, ImGui::CalcTextSize("0000-00-00 00:00:00").x + theme::dp(24.f));
         ImGui::TableSetupColumn("Tag", ImGuiTableColumnFlags_WidthStretch);
         ImGui::TableSetupScrollFreeze(0, 1);
         // Each header is centered over what its column holds: the date and the whole tag column.
@@ -428,7 +472,7 @@ void MainWindow::drawBackups()
     const bool chosen = backupList_.choice.has_value();
     // What is under the list: the row of buttons, and in the Manage tab the tag row too (plus the gaps between them).
     const auto& style = ImGui::GetStyle();
-    const float footerBelow = style.ItemSpacing.y * 2 + ImGui::GetFrameHeight() + 2.f;
+    const float footerBelow = style.ItemSpacing.y * 2 + ImGui::GetFrameHeight() + theme::dp(2.f);
     const float tagRowBelow = ImGui::GetFrameHeight() + style.ItemSpacing.y;
     // The tab to come up on is asked for once: when the window opens, and when coming back from a delete or clean-up.
     const auto wanted = std::exchange(selectTab_, std::nullopt);
@@ -460,22 +504,17 @@ void MainWindow::drawBackups()
         ImGui::AlignTextToFramePadding();
         ImGui::TextUnformatted("Tag");
         ImGui::SameLine();
-        const auto& style = ImGui::GetStyle();
         const auto buttonWidth = [&](const char* label) { return ImGui::CalcTextSize(label).x + style.FramePadding.x * 2; };
         // Save tag belongs to the input, so it sits close to it; Delete keeps the usual gap so it is not hit by mistake.
-        const float tagGap = 4.f;
+        const float tagGap = theme::dp(4.f);
         ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - buttonWidth("Save tag") - buttonWidth("Delete") - tagGap - style.ItemSpacing.x);
         const bool entered = ImGui::InputText("##tag", backupList_.tagInput.data(), backupList_.tagInput.size(), ImGuiInputTextFlags_EnterReturnsTrue);
         ImGui::SameLine(0, tagGap);
         const bool saveClicked = ImGui::Button("Save tag");
         ImGui::SameLine();
-        const auto& palette = theme::palette();
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(.78f, .22f, .22f, 1));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(.85f, .28f, .28f, 1));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(.68f, .18f, .18f, 1));
-        ImGui::PushStyleColor(ImGuiCol_Text, palette.accentText);
+        dialog::pushAccent(true);
         const bool deleteClicked = ImGui::Button("Delete");
-        ImGui::PopStyleColor(4);
+        dialog::popAccent();
         ImGui::EndDisabled();
         if (chosen && (entered || saveClicked)) saveBackupTag();
         if (chosen && deleteClicked) { confirmDelete_ = true; ImGui::OpenPopup("Delete backup"); }
@@ -502,7 +541,7 @@ void MainWindow::drawCleanBackups()
     ImGui::AlignTextToFramePadding();
     ImGui::TextUnformatted("Keep the newest");
     ImGui::SameLine();
-    ImGui::SetNextItemWidth(110);
+    ImGui::SetNextItemWidth(theme::dp(110.f));
     ImGui::InputInt("##keep", &backupList_.keep);
     backupList_.keep = std::clamp(backupList_.keep, 1, 999);
     ImGui::SameLine();
@@ -526,16 +565,34 @@ void MainWindow::drawDeleteBackup()
 {
     if (!confirmDelete_ || !backupList_.choice) return;
     ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(.5f,.5f));
-    ImGui::SetNextWindowSize(ImVec2(460,0), ImGuiCond_Always);
-    if (!ImGui::BeginPopupModal("Delete backup", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) return;
+    ImGui::SetNextWindowSize(theme::dp(460, 0), ImGuiCond_Always);
+    if (!ImGui::BeginPopupModal("Delete backup", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        // The confirmation went away some other way; there is nothing to confirm any more.
+        if (confirmShown_) {
+            confirmShown_ = false;
+            confirmDelete_ = false;
+        }
+        return;
+    }
+    confirmShown_ = true;
+    // Esc belongs to the confirmation while it is up: it closes that and leaves the dialog under it as it is.
+    if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+        escapeUsed_ = true;
+        confirmDelete_ = false;
+        confirmShown_ = false;
+        ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+        return;
+    }
     const auto entry = backupList_.entries[*backupList_.choice];
     dialog::title("Delete backup");
     const std::string named = entry.tag.empty() ? "" : "\"" + entry.tag + "\" ";
     ImGui::TextWrapped("Delete the backup %ssaved on %s? This cannot be undone.", named.c_str(), entry.timestamp.c_str());
     const int hit = dialog::footer({{"Back"}, {"Delete backup", false, true}});
-    if (hit == 0) { confirmDelete_ = false; ImGui::CloseCurrentPopup(); }
+    if (hit == 0) { confirmDelete_ = false; confirmShown_ = false; ImGui::CloseCurrentPopup(); }
     else if (hit == 1) {
         confirmDelete_ = false;
+        confirmShown_ = false;
         ImGui::CloseCurrentPopup();
         try {
             backupList_.deleteChosen();
@@ -547,6 +604,7 @@ void MainWindow::drawDeleteBackup()
 void MainWindow::cancelDialog()
 {
     pending_ = Action::None;
+    pendingProfile_.reset();
     finishDialog();
 }
 void MainWindow::finishDialog()
@@ -617,6 +675,34 @@ void drawFolderIcon(ImDrawList* draw, ImVec2 topLeft, float height)
 }
 }
 
+// Lists the folder shown in the Import tab: folders and .toml files, folders first.
+void MainWindow::refreshFiles()
+{
+    files_.clear();
+    filesDir_ = directory_;
+    filesAt_ = std::chrono::steady_clock::now();
+    std::error_code error;
+    std::filesystem::directory_iterator it(directory_, error), end;
+    while (!error && it != end) {
+        std::error_code ec;
+        const bool isDirectory = it->is_directory(ec);
+        const bool hidden = it->path().filename().string().starts_with('.');
+        if (!ec && !hidden && (isDirectory || it->path().extension() == ".toml")) {
+            FileEntry entry{it->path(), isDirectory, {}, {}};
+            std::error_code timeError, sizeError;
+            const auto time = it->last_write_time(timeError);
+            if (!timeError) entry.modified = fileTime(time);
+            if (!isDirectory) { const auto bytes = it->file_size(sizeError); if (!sizeError) entry.size = fileSize(bytes); }
+            files_.push_back(std::move(entry));
+        }
+        it.increment(error);
+    }
+    filesNote_ = error ? error.message() : std::string();
+    std::sort(files_.begin(), files_.end(), [](const auto& a, const auto& b) {
+        return a.directory != b.directory ? a.directory > b.directory : a.path.filename() < b.path.filename();
+    });
+}
+
 void MainWindow::drawImportTab(const float belowList)
 {
     // Path bar: up button plus an editable folder; typing a .toml file path selects that file.
@@ -637,7 +723,8 @@ void MainWindow::drawImportTab(const float belowList)
     ImGui::SetNextItemWidth(-1);
     if (ImGui::InputText("##dir", dirInput_.data(), dirInput_.size(), ImGuiInputTextFlags_EnterReturnsTrue)) {
         std::error_code ec;
-        const std::filesystem::path entered(dirInput_.data());
+        std::filesystem::path entered(dirInput_.data());
+        if (entered.is_relative()) entered = directory_ / entered;  // relative to the folder shown, not to where the program started
         if (std::filesystem::is_directory(entered, ec)) goTo(entered);
         else if (std::filesystem::is_regular_file(entered, ec)) {
             goTo(entered.parent_path());
@@ -645,54 +732,35 @@ void MainWindow::drawImportTab(const float belowList)
         } else dialogError_ = "That folder is unavailable.";
     }
 
-    struct Entry { std::filesystem::path path; bool directory; std::string modified, size; };
-    std::vector<Entry> entries;
-    std::error_code error;
-    std::filesystem::directory_iterator it(directory_, error), end;
-    while (!error && it != end) {
-        std::error_code ec;
-        const bool isDirectory = it->is_directory(ec);
-        const bool hidden = it->path().filename().string().starts_with('.');
-        if (!ec && !hidden && (isDirectory || it->path().extension() == ".toml")) {
-            Entry entry{it->path(), isDirectory, {}, {}};
-            std::error_code timeError, sizeError;
-            const auto time = it->last_write_time(timeError);
-            if (!timeError) entry.modified = fileTime(time);
-            if (!isDirectory) { const auto bytes = it->file_size(sizeError); if (!sizeError) entry.size = fileSize(bytes); }
-            entries.push_back(std::move(entry));
-        }
-        it.increment(error);
-    }
-    std::sort(entries.begin(), entries.end(), [](const auto& a, const auto& b) {
-        return a.directory != b.directory ? a.directory > b.directory : a.path.filename() < b.path.filename();
-    });
+    if (filesDir_ != directory_ || std::chrono::steady_clock::now() - filesAt_ > std::chrono::seconds(1)) refreshFiles();
+    const auto& entries = files_;
 
     const std::filesystem::path chosen(path_.data());
     // The list fills the tab down to what sits under it, an error line included, like the list of backups does.
     const auto& style = ImGui::GetStyle();
     const float errorHeight = dialogError_.empty() ? 0.f
         : ImGui::CalcTextSize(dialogError_.c_str(), nullptr, false, ImGui::GetContentRegionAvail().x).y + style.ItemSpacing.y;
-    ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(8, 4));
+    ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, theme::dp(8, 4));
     ImGui::BeginChild("Files", ImVec2(0, -(belowList + errorHeight)), ImGuiChildFlags_Borders);
     if (ImGui::BeginTable("files", 3, ImGuiTableFlags_ScrollY | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingFixedFit)) {
         ImGui::TableSetupScrollFreeze(0, 1);
         ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch);
-        ImGui::TableSetupColumn("Modified", ImGuiTableColumnFlags_WidthFixed, 130.f);
-        ImGui::TableSetupColumn("Size", ImGuiTableColumnFlags_WidthFixed, 70.f);
+        ImGui::TableSetupColumn("Modified", ImGuiTableColumnFlags_WidthFixed, theme::dp(130.f));
+        ImGui::TableSetupColumn("Size", ImGuiTableColumnFlags_WidthFixed, theme::dp(70.f));
         ImGui::TableHeadersRow();
-        const float iconWidth = ImGui::GetTextLineHeight() * 1.05f + 8.f;
+        const float iconWidth = ImGui::GetTextLineHeight() * 1.05f + theme::dp(8.f);
         for (std::size_t i=0; i<entries.size(); ++i) {
             const auto& entry = entries[i];
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
             ImGui::PushID(static_cast<int>(i));
             const ImVec2 iconPos = ImGui::GetCursorScreenPos();
-            ImGui::Indent(entry.directory ? iconWidth : 0.f);
+            if (entry.directory) ImGui::Indent(iconWidth);  // room for the folder icon; a file's name starts at the edge
             const auto name = entry.path.filename().string();
             const bool picked = !entry.directory && chosen == entry.path;
             const bool activated = ImGui::Selectable(name.c_str(), picked,
                 ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowDoubleClick);
-            ImGui::Unindent(entry.directory ? iconWidth : 0.f);
+            if (entry.directory) ImGui::Unindent(iconWidth);
             if (entry.directory) drawFolderIcon(ImGui::GetWindowDrawList(), iconPos, ImGui::GetTextLineHeight());
             ImGui::TableNextColumn();
             ImGui::TextDisabled("%s", entry.modified.c_str());
@@ -700,17 +768,19 @@ void MainWindow::drawImportTab(const float belowList)
             ImGui::TextDisabled("%s", entry.size.c_str());
             ImGui::PopID();
             if (!activated) continue;
-            const bool doubleClick = ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left);
-            if (entry.directory) { if (doubleClick) goTo(entry.path); continue; }
+            // Enter on a row does what a double click does, so folders can be opened and files imported from the keyboard.
+            const bool enter = ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter);
+            const bool open = ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left) || enter;
+            if (entry.directory) { if (open) goTo(entry.path); continue; }
             dialogError_.clear();
             std::snprintf(path_.data(), path_.size(), "%s", entry.path.c_str());
-            // A double click imports at once, the same as the Import button below.
-            if (doubleClick) importPath_ = entry.path;
+            // Opening a file imports it at once, the same as the Import button below.
+            if (open) importPath_ = entry.path;
         }
         if (entries.empty()) {
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
-            ImGui::TextDisabled(error ? "Cannot list folder: %s" : "No folders or .toml files here", error.message().c_str());
+            ImGui::TextDisabled(filesNote_.empty() ? "No folders or .toml files here" : "Cannot list folder: %s", filesNote_.c_str());
         }
         ImGui::EndTable();
     }
@@ -756,10 +826,10 @@ void MainWindow::drawChanges()
     const float rowHeight = ImGui::GetTextLineHeight() + style.CellPadding.y * 2;
     const float error = dialogError_.empty() ? 0.f
         : ImGui::CalcTextSize(dialogError_.c_str(), nullptr, false, ImGui::GetContentRegionAvail().x).y + style.ItemSpacing.y;
-    const float footer = style.ItemSpacing.y * 3 + error + ImGui::GetFrameHeight() + style.WindowPadding.y + 2.f;
+    const float footer = style.ItemSpacing.y * 3 + error + ImGui::GetFrameHeight() + style.WindowPadding.y + theme::dp(2.f);
     const auto* viewport = ImGui::GetMainViewport();
     // The dialog stays centered and may be as tall as the window less a margin; the rest of that is for the table.
-    const float room = viewport->WorkSize.y - 40.f - ImGui::GetCursorPosY() - footer;
+    const float room = viewport->WorkSize.y - theme::dp(40.f) - ImGui::GetCursorPosY() - footer;
     const float fitting = std::max(3.f, std::floor(room / rowHeight) - 1.f);  // one row is the header
     const float rows = std::min({static_cast<float>(preview.changes.size()), 10.f, fitting});
     if (!ImGui::BeginTable("ApplyChanges", 3, ImGuiTableFlags_ScrollY | ImGuiTableFlags_RowBg | ImGuiTableFlags_Borders,
@@ -789,11 +859,11 @@ void MainWindow::drawDialog()
     // The Backups dialogs share one height, in lines of text so it follows the font, and never taller than the window;
     // every other dialog is as tall as its content.
     const bool fixedHeight = dialog_ == Dialog::Backups || dialog_ == Dialog::CleanBackups;
-    const float backupsHeight = std::min(ImGui::GetFrameHeightWithSpacing() * 14.f, viewport->WorkSize.y - 40.f);
+    const float backupsHeight = std::min(ImGui::GetFrameHeightWithSpacing() * 14.f, viewport->WorkSize.y - theme::dp(40.f));
     // The Apply dialog grows when the keyboard's answer brings the list of changes, so it is kept centered instead of
     // only when it appears; otherwise it would grow down and off the window.
     ImGui::SetNextWindowPos(viewport->GetCenter(), dialog_ == Dialog::Apply ? ImGuiCond_Always : ImGuiCond_Appearing, ImVec2(.5f,.5f));
-    ImGui::SetNextWindowSize(ImVec2(620, fixedHeight ? backupsHeight : 0), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(theme::dp(620.f), fixedHeight ? backupsHeight : 0), ImGuiCond_Always);
     if (!ImGui::BeginPopupModal("HHKBS", nullptr, fixedHeight ? ImGuiWindowFlags_NoResize : ImGuiWindowFlags_AlwaysAutoResize)) return;
     // Every dialog draws its own title, error line and footer through dialog::.
     if (dialog_ == Dialog::Assign) {
@@ -836,7 +906,8 @@ void MainWindow::drawDialog()
                 const auto& preview = previews_[profile];
                 if (preview.read && preview.error.empty())
                     label += "   " + std::to_string(preview.changes.size()) + (preview.changes.size() == 1 ? " key" : " keys");
-                if (ImGui::Selectable(label.c_str(), applyView_ == profile)) applyView_ = profile;
+                // The count arrives later and changes the text; the ID after ### stays, so the row keeps its focus.
+                if (ImGui::Selectable((label + "###profile").c_str(), applyView_ == profile)) applyView_ = profile;
                 ImGui::PopID();
                 anyPicked = anyPicked || applyPick_[profile];
             }
@@ -846,7 +917,7 @@ void MainWindow::drawDialog()
             drawChanges();
         }
         dialog::error(dialogError_);
-        const int hit = dialog::footer({{"Cancel"}, {"Apply", true, false, anyPicked && !preview_.valid()}});
+        const int hit = dialog::footer({{"Cancel"}, {"Apply", true, false, anyPicked && !busy()}});
         if (hit == 0) cancelDialog();
         else if (hit == 1) { finishDialog(); beginApply(); }
     } else if (dialog_ == Dialog::Defaults) {
@@ -871,18 +942,15 @@ void MainWindow::drawDialog()
                         work_.keymap.setScanCode(layer, slot, defaults.scanCode(layer,slot));
                 work_.savedBytes = work_.keymap.toBytes();  // the built-in keymap is not something that can be lost
             } else {
-                work_.keymap = defaults;
-                work_.loaded = true;
-                work_.useKeyboardAsReference();
-                work_.savedBytes = work_.keymap.toBytes();
-                work_.summary = "Default keymap";
+                work_.loadContent(defaults, "Default keymap");
                 status_ = "Loaded default keymap";
                 message_.clear();
             }
             finishDialog();
         }
     }
-    if (ImGui::IsKeyPressed(ImGuiKey_Escape)) cancelDialog();
+    if (ImGui::IsKeyPressed(ImGuiKey_Escape) && !escapeUsed_) cancelDialog();
+    escapeUsed_ = false;
     ImGui::EndPopup();
 }
 
@@ -935,6 +1003,7 @@ void drawThemeIcon(ImDrawList* draw, ImVec2 min, ImVec2 max, theme::Mode mode)
 void MainWindow::draw()
 {
     pollDrop();
+    pollClose();
     pollScan();
     pollApply();
     pollPreview();
@@ -951,8 +1020,8 @@ void MainWindow::draw()
     ImGui::SetWindowFontScale(1.7f);
     ImGui::TextUnformatted("HHKBS");
     ImGui::SetWindowFontScale(1.f);
-    const float smallTop = titleTop + ImGui::GetItemRectSize().y - ImGui::GetTextLineHeight() - 3.f;
-    ImGui::SameLine(0, 16.f);
+    const float smallTop = titleTop + ImGui::GetItemRectSize().y - ImGui::GetTextLineHeight() - theme::dp(3.f);
+    ImGui::SameLine(0, theme::dp(16.f));
     ImGui::SetCursorPosY(smallTop);
     ImGui::TextDisabled("HHKB Studio Keymap Editor for Linux");
     ImGui::SameLine();
@@ -971,22 +1040,21 @@ void MainWindow::draw()
     ImGui::BeginDisabled(!work_.loaded || busy);
     ImGui::AlignTextToFramePadding();
     ImGui::TextUnformatted("Layer");
-    const char* layers[] = {"Base", "Fn1", "Fn2", "Fn3"};
     for (std::size_t i=0; i<4; ++i) {
         ImGui::SameLine();
         const bool selected = i == layer_;
         if (selected) ImGui::PushStyleColor(ImGuiCol_Button, theme::palette().selected);
-        if (ImGui::Button(layers[i], ImVec2(76,32))) layer_ = i;
+        if (ImGui::Button(layerNames[i], theme::dp(76, 32))) layer_ = i;
         if (selected) ImGui::PopStyleColor();
     }
     ImGui::EndDisabled();
     // Profiles are right-aligned; wrap below the layers when the window is too narrow.
     const float spacing = ImGui::GetStyle().ItemSpacing.x;
-    const float refreshWidth = 32.f;
-    const float profilesWidth = refreshWidth + spacing + ImGui::CalcTextSize("Keyboard profile").x + 4*(96 + spacing);
+    const float refreshWidth = theme::dp(32.f);
+    const float profilesWidth = refreshWidth + spacing + ImGui::CalcTextSize("Keyboard profile").x + 4*(theme::dp(96.f) + spacing);
     const float profilesX = ImGui::GetWindowWidth() - ImGui::GetStyle().WindowPadding.x - profilesWidth;
     const float layersEnd = ImGui::GetItemRectMax().x - ImGui::GetWindowPos().x;
-    const bool sideBySide = profilesX >= layersEnd + 36.f;
+    const bool sideBySide = profilesX >= layersEnd + theme::dp(36.f);
     if (sideBySide) ImGui::SameLine(profilesX);
     else ImGui::Spacing();
     ImGui::BeginDisabled(demo_ || busy);
@@ -1001,18 +1069,18 @@ void MainWindow::draw()
         // Over Bluetooth only the profile the keyboard is on can be read; one already read can still be shown.
         const bool usbOnly = bluetooth_ && !selected && !work_.stashed[i];
         ImGui::BeginDisabled(usbOnly);
-        if (ImGui::Button(label.c_str(), ImVec2(96,32))) selectProfile(i);
+        if (ImGui::Button(label.c_str(), theme::dp(96, 32))) selectProfile(i);
         ImGui::EndDisabled();
         // A dot marks a profile whose work differs from what the keyboard holds.
         if (std::find(editedProfiles.begin(), editedProfiles.end(), i) != editedProfiles.end())
-            ImGui::GetWindowDrawList()->AddCircleFilled(ImVec2(ImGui::GetItemRectMax().x - 9.f, ImGui::GetItemRectMin().y + 9.f),
-                                                        3.f, theme::palette().keyBorderChanged);
+            ImGui::GetWindowDrawList()->AddCircleFilled(ImVec2(ImGui::GetItemRectMax().x - theme::dp(9.f), ImGui::GetItemRectMin().y + theme::dp(9.f)),
+                                                        theme::dp(3.f), theme::palette().keyBorderChanged);
         if (usbOnly) ImGui::SetItemTooltip("Other profiles can be read over USB");
         if (selected) ImGui::PopStyleColor();
     }
     // Re-reads the profile the keyboard is using; it replaces the editor content, so unsaved edits are confirmed first.
     ImGui::SameLine();
-    if (ImGui::Button("##refresh", ImVec2(refreshWidth, 32))) request(Action::Read);
+    if (ImGui::Button("##refresh", ImVec2(refreshWidth, theme::dp(32.f)))) request(Action::Read);
     drawRefreshIcon(ImGui::GetWindowDrawList(), ImGui::GetItemRectMin(), ImGui::GetItemRectMax(), ImGui::GetColorU32(ImGuiCol_Text));
     ImGui::SetItemTooltip("Read the profile the keyboard is currently using");
     ImGui::EndDisabled();
@@ -1020,7 +1088,7 @@ void MainWindow::draw()
     const auto& style = ImGui::GetStyle();
     // Reserve exactly what is drawn under the keyboard: the button row. Messages live inside the keyboard frame.
     const float below = style.ItemSpacing.y + ImGui::GetFrameHeight();
-    const float boardHeight = std::max(320.f, ImGui::GetContentRegionAvail().y - below - 2.f);
+    const float boardHeight = std::max(theme::dp(320.f), ImGui::GetContentRegionAvail().y - below - theme::dp(2.f));
     std::array<std::optional<bool>, 4> padStates{};
     for (std::size_t pad = 0; pad < padStates.size(); ++pad) {
         const auto state = pads_.state(pad);
@@ -1052,29 +1120,23 @@ void MainWindow::draw()
     if (ImGui::Button("Backups")) openBackups();
     ImGui::SameLine();
     ImGui::BeginDisabled(!work_.loaded || !work_.keymap.isModified());
-    if (ImGui::Button("Discard changes")) {
-        work_.keymap.reset();
-        work_.savedBytes = work_.keymap.toBytes();  // it is the keyboard's content again, so there is nothing left to lose
-    }
+    if (ImGui::Button("Discard changes")) request(Action::Discard);
     ImGui::SetItemTooltip("Put the profile on screen back to what the keyboard holds");
     ImGui::EndDisabled();
     ImGui::EndDisabled();
 
     const auto buttonWidth = [&](const char* label) { return ImGui::CalcTextSize(label).x + style.FramePadding.x * 2; };
     const float rightX = ImGui::GetWindowWidth() - style.WindowPadding.x - buttonWidth("Apply to keyboard");
-    if (rightX >= ImGui::GetItemRectMax().x - ImGui::GetWindowPos().x + 36.f) ImGui::SameLine(rightX);
+    if (rightX >= ImGui::GetItemRectMax().x - ImGui::GetWindowPos().x + theme::dp(36.f)) ImGui::SameLine(rightX);
     else ImGui::SameLine();
-    ImGui::PushStyleColor(ImGuiCol_Button, theme::palette().accent);
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, theme::palette().accentHovered);
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, theme::palette().accentActive);
-    ImGui::PushStyleColor(ImGuiCol_Text, theme::palette().accentText);
+    dialog::pushAccent();
     const bool nothingToApply = editedProfiles.empty();
     ImGui::BeginDisabled(!work_.loaded || demo_ || busy || bluetooth_ || nothingToApply);
     if (ImGui::Button("Apply to keyboard")) openApply();
     ImGui::EndDisabled();
     if (bluetooth_) ImGui::SetItemTooltip("Applying needs a USB connection");
     else if (nothingToApply && work_.loaded && !demo_) ImGui::SetItemTooltip("No profile has changes to write");
-    ImGui::PopStyleColor(4);
+    dialog::popAccent();
     drawDialog();
     ImGui::End();
 }

@@ -12,7 +12,7 @@ jobs:
   release:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Check the tag matches the project version
         run: |
@@ -22,21 +22,7 @@ jobs:
             exit 1
           fi
 
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            xvfb libgl1-mesa-dev libgl1-mesa-dri \
-            libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev
-
-      - name: Configure
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-
-      - name: Build
-        run: cmake --build build --parallel
-
-      - name: Test
-        run: ctest --test-dir build --output-on-failure
+      - uses: ./.github/actions/build-and-test
 
       - name: Package
         run: |
@@ -50,10 +36,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           # GitHub's generated notes without the New Contributors section and the "by @author" on each line.
-          # An @mention anywhere in the notes makes GitHub add a Contributors avatar row, so none may remain.
+          # An @mention anywhere in the notes makes GitHub add a Contributors avatar row, so none may remain: what is
+          # left of one (a name in a pull request title) loses its @.
           gh api -X POST "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
             -f tag_name="$GITHUB_REF_NAME" --jq .body \
             | sed -e '/^## New Contributors$/,/^\*\*Full Changelog\*\*/{/^\*\*Full Changelog\*\*/!d}' \
-                  -e 's/ by @[^ ]* in / in /' > notes.md
+                  -e 's/ by @[^ ]* in / in /' \
+                  -e 's/@\([A-Za-z0-9]\)/\1/g' > notes.md
           gh release create "$GITHUB_REF_NAME" "hhkbs-${GITHUB_REF_NAME}-linux-x86_64.tar.gz" \
             --verify-tag --title "$GITHUB_REF_NAME" --notes-file notes.md

@@ -10,12 +10,10 @@ namespace {
 
 constexpr std::uint32_t configurationUsagePage = 0xFF60;
 
-}  // namespace
-
-std::optional<std::uint8_t> configurationReportId(const std::span<const std::uint8_t> descriptor)
+// Walks the items of a descriptor, calling `onGlobal(tag, value)` for each global item, and stops at a cut-off item.
+template <typename Function>
+void forEachGlobalItem(const std::span<const std::uint8_t> descriptor, Function&& onGlobal)
 {
-    std::uint32_t usagePage = 0;
-    std::optional<std::uint8_t> reportId;
     for (std::size_t position = 0; position < descriptor.size();) {
         const std::uint8_t prefix = descriptor[position];
         if (prefix == 0xFE) {  // a long item: <prefix> <data size> <tag> <data>
@@ -29,12 +27,30 @@ std::optional<std::uint8_t> configurationReportId(const std::span<const std::uin
         for (std::size_t index = 0; index < size; ++index) {
             value |= static_cast<std::uint32_t>(descriptor[position + 1 + index]) << (8 * index);
         }
-        const bool global = ((prefix >> 2) & 0x03) == 1;
-        const auto tag = static_cast<std::uint8_t>(prefix >> 4);
-        if (global && tag == 0x0) usagePage = value;
-        else if (global && tag == 0x8 && usagePage == configurationUsagePage) reportId = static_cast<std::uint8_t>(value);
+        if (((prefix >> 2) & 0x03) == 1) onGlobal(static_cast<std::uint8_t>(prefix >> 4), value);
         position += 1 + size;
     }
+}
+
+}  // namespace
+
+bool hasConfigurationCollection(const std::span<const std::uint8_t> descriptor)
+{
+    bool found = false;
+    forEachGlobalItem(descriptor, [&](const std::uint8_t tag, const std::uint32_t value) {
+        if (tag == 0x0 && value == configurationUsagePage) found = true;
+    });
+    return found;
+}
+
+std::optional<std::uint8_t> configurationReportId(const std::span<const std::uint8_t> descriptor)
+{
+    std::uint32_t usagePage = 0;
+    std::optional<std::uint8_t> reportId;
+    forEachGlobalItem(descriptor, [&](const std::uint8_t tag, const std::uint32_t value) {
+        if (tag == 0x0) usagePage = value;
+        else if (tag == 0x8 && usagePage == configurationUsagePage) reportId = static_cast<std::uint8_t>(value);
+    });
     return reportId;
 }
 

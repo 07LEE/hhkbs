@@ -20,8 +20,18 @@ void setMode(Mode mode);
 const char* modeName(Mode mode);
 Mode nextMode(Mode mode);
 
-// Re-reads the desktop's color scheme; only has an effect in Auto mode.
+// Asks for the desktop's color scheme again; only has an effect in Auto mode. The answer comes from a helper
+// program that can be slow, so it is collected later by poll() instead of making the window wait for it.
 void refresh();
+// Applies the answer to refresh() once it has arrived; cheap enough to call every frame.
+void poll();
 
 const Palette& palette();
+
+// How much larger than the plain layout this screen is drawn: 1 on an ordinary display, 2 on one that shows
+// everything at twice the size. Sizes written in the layout are multiplied by it with dp().
+float scale();
+void setScale(float scale);
+inline float dp(float value) { return value * scale(); }
+inline ImVec2 dp(float x, float y) { return ImVec2(x * scale(), y * scale()); }
 }

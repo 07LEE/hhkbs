@@ -57,6 +57,8 @@ add_library(hhkbs_core STATIC
     src/device/HidrawTransport.cpp
     src/device/HidrawTransport.h
     src/device/Transport.h
+    src/keymap/AtomicFile.cpp
+    src/keymap/AtomicFile.h
     src/keymap/BackupFiles.cpp
     src/keymap/BackupFiles.h
     src/keymap/Keymap.cpp
@@ -66,6 +68,7 @@ add_library(hhkbs_core STATIC
     src/keymap/ProfileDiff.cpp
     src/keymap/ProfileDiff.h
     src/keymap/ProfileFiles.cpp
+    src/keymap/ProfileFiles.h
     src/keymap/ProfileSerializer.cpp
     src/keymap/ProfileSerializer.h
     src/keymap/ScanCodeCatalog.cpp
@@ -77,7 +80,8 @@ target_include_directories(hhkbs_core
         "${CMAKE_CURRENT_SOURCE_DIR}/src"
 )
 
-target_compile_features(hhkbs_core PUBLIC cxx_std_20)
+# The core starts threads (the pad monitor), so everything that links it needs the thread library, including the tests.
+target_link_libraries(hhkbs_core PUBLIC Threads::Threads)
 
 add_executable(hhkbs
     src/main.cpp
@@ -89,19 +93,16 @@ add_executable(hhkbs
     src/gui/KeyboardWidget.h
     src/gui/MainWindow.cpp
     src/gui/MainWindow.h
+    src/gui/Text.cpp
+    src/gui/Text.h
     src/gui/Theme.cpp
     src/gui/Theme.h
-)
-
-set_target_properties(hhkbs PROPERTIES
-    OUTPUT_NAME "hhkbs"
 )
 
 target_link_libraries(hhkbs
     PRIVATE
         hhkbs_core
         hhkbs_imgui
-        Threads::Threads
 )
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
@@ -115,6 +116,10 @@ install(
     RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
 )
 
+# The udev rule that lets a logged-in user reach the keyboard. Where it has to go depends on the system (see the readme),
+# so it is installed as data and not into /etc or /usr/lib.
+install(FILES packaging/60-hhkbs.rules DESTINATION "${CMAKE_INSTALL_DATADIR}/hhkbs")
+
 # Keep upstream notices in place; install the consolidated distribution copies.
 install(FILES
     LICENSE
@@ -125,49 +130,33 @@ install(FILES
 
 include(CTest)
 if(BUILD_TESTING)
-    add_executable(hhkbs_keymap_tests
-        tests/KeymapTests.cpp
-    )
+    # One executable per source file in tests/, built with the core's warnings; `name` is also the ctest name.
+    function(hhkbs_add_test name executable source)
+        add_executable(${executable} ${source})
+        target_link_libraries(${executable} PRIVATE hhkbs_core)
+        target_include_directories(${executable} PRIVATE tests)  # for the fake keyboard shared by some tests
+        if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+            target_compile_options(${executable} PRIVATE -Wall -Wextra -Wpedantic)
+        endif()
+        add_test(NAME ${name} COMMAND ${executable})
+    endfunction()
 
-    target_link_libraries(hhkbs_keymap_tests PRIVATE hhkbs_core)
+    hhkbs_add_test(keymap_model hhkbs_keymap_tests tests/KeymapTests.cpp)
+    hhkbs_add_test(hhkb_device_protocol hhkbs_device_tests tests/HhkbStudioDeviceTests.cpp)
+    hhkbs_add_test(profile_files hhkbs_profile_files_tests tests/ProfileFilesTests.cpp)
+    hhkbs_add_test(keyboard_tasks hhkbs_keyboard_tasks_tests tests/KeyboardTasksTests.cpp)
+    hhkbs_add_test(hidraw_transport hhkbs_hidraw_transport_tests tests/HidrawTransportTests.cpp)
+    hhkbs_add_test(pad_monitor hhkbs_pad_monitor_tests tests/PadMonitorTests.cpp)
+    hhkbs_add_test(hid_report hhkbs_hid_report_tests tests/HidReportTests.cpp)
+    hhkbs_add_test(backup_list hhkbs_backup_list_tests tests/BackupListTests.cpp)
+    hhkbs_add_test(profile_workspace hhkbs_profile_workspace_tests tests/ProfileWorkspaceTests.cpp)
 
-    add_executable(hhkbs_device_tests
-        tests/HhkbStudioDeviceTests.cpp
-    )
-
-    target_link_libraries(hhkbs_device_tests PRIVATE hhkbs_core)
-    target_include_directories(hhkbs_device_tests PRIVATE tests)
-
-    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-        target_compile_options(hhkbs_keymap_tests PRIVATE -Wall -Wextra -Wpedantic)
-        target_compile_options(hhkbs_device_tests PRIVATE -Wall -Wextra -Wpedantic)
-    endif()
-
-    add_executable(hhkbs_profile_files_tests tests/ProfileFilesTests.cpp)
-    target_link_libraries(hhkbs_profile_files_tests PRIVATE hhkbs_core)
-    add_executable(hhkbs_keyboard_tasks_tests tests/KeyboardTasksTests.cpp)
-    target_link_libraries(hhkbs_keyboard_tasks_tests PRIVATE hhkbs_core)
-    target_include_directories(hhkbs_keyboard_tasks_tests PRIVATE tests)
-    add_executable(hhkbs_pad_monitor_tests tests/PadMonitorTests.cpp)
-    target_link_libraries(hhkbs_pad_monitor_tests PRIVATE hhkbs_core)
-    add_executable(hhkbs_hid_report_tests tests/HidReportTests.cpp)
-    target_link_libraries(hhkbs_hid_report_tests PRIVATE hhkbs_core)
-    add_executable(hhkbs_backup_list_tests tests/BackupListTests.cpp)
-    target_link_libraries(hhkbs_backup_list_tests PRIVATE hhkbs_core)
-    add_executable(hhkbs_profile_workspace_tests tests/ProfileWorkspaceTests.cpp)
-    target_link_libraries(hhkbs_profile_workspace_tests PRIVATE hhkbs_core)
+    # The window is built and drawn for a few frames, which needs a display; without xvfb-run there is no such test.
     find_program(XVFB_RUN xvfb-run)
     if(XVFB_RUN)
         add_test(NAME gui_startup COMMAND "${XVFB_RUN}" -a $<TARGET_FILE:hhkbs> --smoke-test)
         set_tests_properties(gui_startup PROPERTIES TIMEOUT 20)
+    else()
+        message(STATUS "xvfb-run was not found: the gui_startup test is not defined")
     endif()
-    add_test(NAME profile_files COMMAND hhkbs_profile_files_tests)
-    add_test(NAME keyboard_tasks COMMAND hhkbs_keyboard_tasks_tests)
-    add_test(NAME pad_monitor COMMAND hhkbs_pad_monitor_tests)
-    add_test(NAME hid_report COMMAND hhkbs_hid_report_tests)
-    add_test(NAME backup_list COMMAND hhkbs_backup_list_tests)
-    add_test(NAME profile_workspace COMMAND hhkbs_profile_workspace_tests)
-
-    add_test(NAME keymap_model COMMAND hhkbs_keymap_tests)
-    add_test(NAME hhkb_device_protocol COMMAND hhkbs_device_tests)
 endif()

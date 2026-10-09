@@ -23,6 +23,32 @@ std::string ProfileWorkspace::unsavedList() const
     return list;
 }
 
+bool ProfileWorkspace::stashedUnsaved() const
+{
+    for (const auto& stash : stashed)
+        if (stash && stash->keymap.toBytes() != stash->savedBytes) return true;
+    return false;
+}
+
+std::string ProfileWorkspace::stashedUnsavedList() const
+{
+    std::string list;
+    for (std::uint16_t i = 0; i < 4; ++i)
+        if (stashed[i] && stashed[i]->keymap.toBytes() != stashed[i]->savedBytes)
+            list += (list.empty() ? "" : ", ") + std::string("Profile ") + std::to_string(i + 1);
+    return list;
+}
+
+bool ProfileWorkspace::readWouldDiscard(const std::uint16_t profile) const
+{
+    return unsaved() && (!selected || *selected == profile);
+}
+
+bool ProfileWorkspace::keyboardChanged(const std::string& serial) const
+{
+    return !keyboardSerial.empty() && serial != keyboardSerial;
+}
+
 const keymap::Keymap* ProfileWorkspace::draft(const std::uint16_t profile) const
 {
     if (selected == profile) return loaded ? &keymap : nullptr;
@@ -71,9 +97,24 @@ void ProfileWorkspace::useKeyboardAsReference()
     if (selected && !keyboardBytes[*selected].empty()) keymap.rebase(keyboardBytes[*selected]);
 }
 
+void ProfileWorkspace::loadContent(keymap::Keymap content, std::string description)
+{
+    keymap = std::move(content);
+    useKeyboardAsReference();
+    savedBytes = keymap.toBytes();
+    loaded = true;
+    summary = std::move(description);
+}
+
 void ProfileWorkspace::adoptKeyboardProfile(const std::uint16_t profile, const std::vector<std::uint8_t>& bytes,
                                             const std::string& serial)
 {
+    if (keyboardChanged(serial)) {
+        // Another keyboard: what was read from the previous one, and the work put aside for it, is not this one's.
+        stashed.fill(std::nullopt);
+        for (auto& held : keyboardBytes) held.clear();
+        selected.reset();
+    }
     keyboardSerial = serial;
     keyboardBytes[profile] = bytes;
     keymap::Keymap fresh(bytes);
