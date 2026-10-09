@@ -79,6 +79,57 @@ void theChosenBackupCanBeTaggedAndDeleted(const std::filesystem::path& directory
     require(list.entries.size() == 1 && !list.choice && !std::filesystem::exists(first), "the chosen backup was not deleted");
 }
 
+void theTagBoxFollowsTheChoice(const std::filesystem::path& directory)
+{
+    const auto folder = directory / "follow";
+    std::filesystem::create_directories(folder);
+    writeBackup(folder, 1000000000, 0);
+    writeBackup(folder, 1000000100, 1);
+
+    BackupList list(folder);
+    list.reload();
+    const auto tagFor = [&](const std::size_t index, const char* text) {
+        list.choice = index;
+        std::snprintf(list.tagInput.data(), list.tagInput.size(), "%s", text);
+        list.saveChosenTag();
+    };
+    tagFor(0, "newer");
+    tagFor(1, "older");
+
+    list.choice = 0;
+    list.followChosenTag();
+    require(std::string(list.tagInput.data()) == "newer", "the box did not show the first backup's tag");
+    list.choice = 1;
+    list.followChosenTag();
+    require(std::string(list.tagInput.data()) == "older", "the box kept the previous backup's tag after the choice moved");
+    require(list.tagShownFor == list.choice, "the box does not know which backup it shows");
+
+    // Text typed for the chosen backup is kept until the choice changes.
+    std::snprintf(list.tagInput.data(), list.tagInput.size(), "%s", "typing");
+    list.followChosenTag();
+    require(std::string(list.tagInput.data()) == "typing", "typed text was replaced while the choice stayed the same");
+}
+
+void cleanUpReportsWhatItCouldNotDelete(const std::filesystem::path& directory)
+{
+    const auto folder = directory / "partial";
+    std::filesystem::create_directories(folder);
+    for (int i = 0; i < 4; ++i) writeBackup(folder, 1000000000 + i * 100, 0);
+
+    BackupList list(folder);
+    list.reload();
+    list.keep = 1;
+    const auto surplus = list.surplus();
+    require(surplus.size() == 3, "three backups should be past the newest one");
+    std::filesystem::remove(surplus[1].path);  // gone behind the window's back
+
+    const auto cleaned = list.deleteSurplus();
+
+    require(cleaned.deleted == 2, "the backups that could be deleted were not all deleted");
+    require(!cleaned.firstError.empty(), "a backup that could not be deleted was not reported");
+    require(list.entries.size() == 1 && !list.choice, "the list was not read again after the clean-up");
+}
+
 void cleanUpKeepsTheNewestAndTheTagged(const std::filesystem::path& directory)
 {
     const auto folder = directory / "clean";
@@ -111,6 +162,8 @@ int main()
     try {
         savedBackupsAreListedAndTagged(directory);
         theChosenBackupCanBeTaggedAndDeleted(directory);
+        theTagBoxFollowsTheChoice(directory);
+        cleanUpReportsWhatItCouldNotDelete(directory);
         cleanUpKeepsTheNewestAndTheTagged(directory);
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
