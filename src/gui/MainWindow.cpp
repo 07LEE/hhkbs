@@ -390,13 +390,40 @@ void MainWindow::requestLoadBackup(const hhkbs::keymap::BackupEntry& entry)
 {
     // Loading replaces the editor, so unsaved edits get the usual chance to be exported first.
     pendingBackup_ = entry;
+    // A backup goes into the profile on screen, and it is written there by Apply; one of another profile is asked about.
+    if (work_.selected && entry.profile != *work_.selected) {
+        dialogError_.clear();
+        dialog_ = Dialog::BackupProfile;
+        return;
+    }
     request(Action::LoadBackup);
+}
+void MainWindow::drawBackupProfile()
+{
+    if (!pendingBackup_ || !work_.selected) { cancelDialog(); return; }
+    const int from = pendingBackup_->profile + 1, into = *work_.selected + 1;
+    dialog::title("Load a backup of another profile");
+    ImGui::TextWrapped("This backup was taken from Profile %d. It goes into Profile %d, which is on screen, and Apply "
+                       "writes it there.", from, into);
+    dialog::error(dialogError_);
+    const std::string load = "Load into Profile " + std::to_string(into);
+    const int hit = dialog::footer({{"Back"}, {load.c_str(), true}});
+    if (hit == 0) {
+        pendingBackup_.reset();
+        dialog_ = Dialog::Backups;
+        selectTab_ = BackupTab::Restore;
+    } else if (hit == 1) {
+        // As if Load had been pressed in the Backups window: an error is shown there.
+        dialog_ = Dialog::Backups;
+        request(Action::LoadBackup);
+    }
 }
 bool MainWindow::loadBackup(const hhkbs::keymap::BackupEntry& entry)
 {
     try {
         work_.loadContent(hhkbs::keymap::readProfile(entry.path),
-                          std::string("Backup ") + (entry.tag.empty() ? "" : "\"" + entry.tag + "\" ") + "from " + entry.timestamp);
+                          std::string("Backup ") + (entry.tag.empty() ? "" : "\"" + entry.tag + "\" ") + "of Profile "
+                              + std::to_string(entry.profile + 1) + " from " + entry.timestamp);
         status_ = "Loaded backup";
         message_.clear();
         finishDialog();
@@ -434,9 +461,11 @@ void MainWindow::drawBackupList(const float belowList)
     ImGui::BeginChild("Backups", ImVec2(0, -(belowList + errorHeight)), ImGuiChildFlags_Borders,
                       ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     if (backupList_.entries.empty()) ImGui::TextDisabled("No backups yet. One is saved before every apply, or press Save.");
-    // A table: the date it was saved (dimmed) and the tag (bright, blank when there is none).
-    if (!backupList_.entries.empty() && ImGui::BeginTable("BackupRows", 2, ImGuiTableFlags_ScrollY | ImGuiTableFlags_RowBg)) {
+    // A table: the date it was saved and the profile it was taken from (dimmed), and the tag (bright, blank when there
+    // is none).
+    if (!backupList_.entries.empty() && ImGui::BeginTable("BackupRows", 3, ImGuiTableFlags_ScrollY | ImGuiTableFlags_RowBg)) {
         ImGui::TableSetupColumn("Saved", ImGuiTableColumnFlags_WidthFixed, ImGui::CalcTextSize("0000-00-00 00:00:00").x + theme::dp(24.f));
+        ImGui::TableSetupColumn("Profile", ImGuiTableColumnFlags_WidthFixed, ImGui::CalcTextSize("Profile").x + theme::dp(24.f));
         ImGui::TableSetupColumn("Tag", ImGuiTableColumnFlags_WidthStretch);
         ImGui::TableSetupScrollFreeze(0, 1);
         // Each header is centered over what its column holds: the date and the whole tag column.
@@ -448,6 +477,8 @@ void MainWindow::drawBackupList(const float belowList)
         ImGui::TableSetColumnIndex(0);
         header("Saved", ImGui::CalcTextSize("0000-00-00 00:00:00").x);
         ImGui::TableSetColumnIndex(1);
+        header("Profile", ImGui::CalcTextSize("Profile").x);
+        ImGui::TableSetColumnIndex(2);
         header("Tag", ImGui::GetContentRegionAvail().x);
         for (std::size_t i=0; i<backupList_.entries.size(); ++i) {
             const auto& entry = backupList_.entries[i];
@@ -456,8 +487,12 @@ void MainWindow::drawBackupList(const float belowList)
             ImGui::TableSetColumnIndex(0);
             ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
             if (ImGui::Selectable(entry.timestamp.c_str(), backupList_.choice == i, ImGuiSelectableFlags_SpanAllColumns)) backupList_.choice = i;
-            ImGui::PopStyleColor();
             ImGui::TableSetColumnIndex(1);
+            const std::string profile = std::to_string(entry.profile + 1);
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (ImGui::CalcTextSize("Profile").x - ImGui::CalcTextSize(profile.c_str()).x) / 2);
+            ImGui::TextUnformatted(profile.c_str());
+            ImGui::PopStyleColor();
+            ImGui::TableSetColumnIndex(2);
             ImGui::TextUnformatted(entry.tag.c_str());
             ImGui::PopID();
         }
@@ -890,6 +925,7 @@ void MainWindow::drawDialog()
     } else if (dialog_ == Dialog::Save) drawSave();
     else if (dialog_ == Dialog::Backups) drawBackups();
     else if (dialog_ == Dialog::CleanBackups) drawCleanBackups();
+    else if (dialog_ == Dialog::BackupProfile) drawBackupProfile();
     else if (dialog_ == Dialog::Apply) {
         dialog::title("Apply to keyboard");
         const auto edited = work_.editedProfiles();
@@ -1135,6 +1171,9 @@ void MainWindow::draw()
     if (ImGui::Button("Apply to keyboard")) openApply();
     ImGui::EndDisabled();
     if (bluetooth_) ImGui::SetItemTooltip("Applying needs a USB connection");
+    // Content from a file, a backup or the defaults has no profile to go to until one is read from the keyboard.
+    else if (nothingToApply && work_.loaded && !demo_ && !work_.selected)
+        ImGui::SetItemTooltip("Read a profile from the keyboard first; the content on screen is written there");
     else if (nothingToApply && work_.loaded && !demo_) ImGui::SetItemTooltip("No profile has changes to write");
     dialog::popAccent();
     drawDialog();
