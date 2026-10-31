@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <chrono>
 #include <pwd.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #include <cstdio>
 #include <cstdlib>
@@ -38,10 +39,31 @@ std::filesystem::path backupDirectory()
     return std::filesystem::path("/tmp") / ("hhkbs-" + std::to_string(::getuid())) / "backups";
 }
 
+namespace {
+
+// Refuses a backup folder, or the folder it is in, that another user made or can write to: a folder in /tmp could have
+// been made by anybody before this program got there, and whoever can write to it can change the backups. Run as root
+// (with sudo, in the home folder of the user who ran it) the owner is not looked at, only who else can write.
+void requireOwnFolder(const std::filesystem::path& directory)
+{
+    for (const auto& folder : {directory, directory.parent_path()}) {
+        struct stat info{};
+        if (folder.empty() || ::stat(folder.c_str(), &info) != 0) continue;
+        if ((::getuid() != 0 && info.st_uid != ::getuid()) || (info.st_mode & (S_IWGRP | S_IWOTH)) != 0)
+            throw std::filesystem::filesystem_error("The backup folder can be changed by another user", folder,
+                                                    std::make_error_code(std::errc::permission_denied));
+    }
+}
+
+}  // namespace
+
 void ensureBackupDirectory(const std::filesystem::path& directory)
 {
     std::error_code error;
-    if (std::filesystem::is_directory(directory, error)) return;
+    if (std::filesystem::is_directory(directory, error)) {
+        requireOwnFolder(directory);
+        return;
+    }
     // The folders that are missing, outermost first; each is made for its owner alone.
     std::vector<std::filesystem::path> missing;
     for (auto level = directory; !level.empty() && !std::filesystem::exists(level, error); level = level.parent_path()) {
@@ -52,6 +74,7 @@ void ensureBackupDirectory(const std::filesystem::path& directory)
         std::filesystem::create_directory(*level);
         std::filesystem::permissions(*level, std::filesystem::perms::owner_all, std::filesystem::perm_options::replace);
     }
+    requireOwnFolder(directory);
 }
 
 std::string backupFileName(const std::time_t when, const std::uint16_t profile)
@@ -88,12 +111,14 @@ std::optional<std::time_t> timeOfStamp(const std::string& stamp)
 std::filesystem::path newBackupPath(const std::filesystem::path& directory, const std::time_t when,
                                     const std::uint16_t profile)
 {
-    // A name not later than the newest backup's would list as older than it.
+    // A name not later than the newest backup's would list as older than it. A newest one far ahead of `when` was made
+    // while the clock was wrong; following it would put every backup from now on at a time that never was.
+    constexpr std::time_t furthestAhead = 24 * 60 * 60;
     std::time_t start = when;
     if (const auto existing = listBackups(directory); !existing.empty()) {
         const auto newest = existing.front().path.filename().string().substr(7, 15);
         if (stampOf(when) <= newest)
-            if (const auto after = timeOfStamp(newest)) start = *after + 1;
+            if (const auto after = timeOfStamp(newest); after && *after - when <= furthestAhead) start = *after + 1;
     }
     constexpr int attempts = 600;
     for (int second = 0; second < attempts; ++second) {

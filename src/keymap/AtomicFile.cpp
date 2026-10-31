@@ -29,6 +29,19 @@ void putInPlaceWithoutReplacing(const char* temporary, const std::filesystem::pa
     ::unlink(temporary);
 }
 
+// Makes the new name in the folder survive a loss of power: the file's data was flushed, but the folder entry that
+// points at it is only on disk once the folder is flushed too.
+void flushFolder(const std::filesystem::path& path)
+{
+    const auto folder = path.parent_path().empty() ? std::filesystem::path(".") : path.parent_path();
+    const int fd = ::open(folder.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (fd < 0) fail("Flush folder");
+    const int result = ::fsync(fd);
+    const int error = errno;
+    ::close(fd);
+    if (result != 0) fail("Flush folder", error);
+}
+
 }  // namespace
 
 void writeFileAtomically(const std::filesystem::path& path, const std::string_view data, const bool overwrite)
@@ -55,6 +68,7 @@ void writeFileAtomically(const std::filesystem::path& path, const std::string_vi
         } else {
             putInPlaceWithoutReplacing(name.data(), path);
         }
+        flushFolder(path);
     } catch (...) {
         if (fd >= 0) ::close(fd);
         ::unlink(name.data());

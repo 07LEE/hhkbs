@@ -227,10 +227,13 @@ void HhkbStudioDevice::writeCurrentProfile(
             "Profile data has an unexpected length");
     }
 
+    // The keyboard can be switched with its own keys while it is written. What is sent, and what is put back after
+    // a failure, must only ever go into the profile that was on when the write began.
+    const auto target = activeProfile();
     try {
-        writeData(0, profile);
+        writeData(0, profile, target);
     } catch (const std::exception& error) {
-        const bool restored = tryRestore(backup);
+        const bool restored = tryRestore(backup, target);
         throw DeviceError(
             DeviceErrorCode::InputOutput,
             std::string("Writing the profile failed: ") + error.what()
@@ -245,7 +248,7 @@ void HhkbStudioDevice::writeCurrentProfile(
     try {
         readBack = readCurrentProfile();
     } catch (const std::exception& error) {
-        const bool restored = tryRestore(backup);
+        const bool restored = tryRestore(backup, target);
         throw DeviceError(
             DeviceErrorCode::InputOutput,
             std::string("The written profile could not be checked: ") + error.what()
@@ -255,7 +258,7 @@ void HhkbStudioDevice::writeCurrentProfile(
                          "apply the saved backup to recover."));
     }
     if (readBack != profile) {
-        const bool restored = tryRestore(backup);
+        const bool restored = tryRestore(backup, target);
         throw DeviceError(
             DeviceErrorCode::Protocol,
             std::string("The keyboard did not keep the written profile. ")
@@ -266,10 +269,12 @@ void HhkbStudioDevice::writeCurrentProfile(
     }
 }
 
-bool HhkbStudioDevice::tryRestore(const std::vector<std::uint8_t>& backup)
+bool HhkbStudioDevice::tryRestore(const std::vector<std::uint8_t>& backup, const std::uint16_t profile)
 {
     try {
-        writeData(0, backup);
+        // On another profile the backup would replace that profile's content, of which no copy was kept.
+        if (activeProfile() != profile) return false;
+        writeData(0, backup, profile);
         return readCurrentProfile() == backup;
     } catch (const std::exception&) {
         return false;
@@ -278,10 +283,17 @@ bool HhkbStudioDevice::tryRestore(const std::vector<std::uint8_t>& backup)
 
 void HhkbStudioDevice::writeData(
     const std::uint16_t start,
-    const std::vector<std::uint8_t>& data)
+    const std::vector<std::uint8_t>& data,
+    const std::uint16_t profile)
 {
     for (std::size_t offset = 0; offset < data.size();
          offset += protocol::maximumDataPayload) {
+        if (const auto active = activeProfile(); active != profile) {
+            throw DeviceError(
+                DeviceErrorCode::Protocol,
+                "The keyboard was switched to profile " + std::to_string(active + 1)
+                    + " while profile " + std::to_string(profile + 1) + " was being written.");
+        }
         const auto count = std::min<std::size_t>(
             protocol::maximumDataPayload,
             data.size() - offset);

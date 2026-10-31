@@ -91,6 +91,23 @@ std::size_t findLayerHeader(const std::string_view structure, std::size_t from)
     return std::string_view::npos;
 }
 
+// Where the scancodes key of a layer starts, between `from` and `end`. It has to be the first thing on its line and be
+// followed by "=", so a key whose name only contains the word, such as old_scancodes, is not taken for it.
+std::size_t findScanCodesKey(const std::string_view structure, std::size_t from, const std::size_t end)
+{
+    constexpr std::string_view key = "scancodes";
+    const auto blank = [](const char c) { return c == ' ' || c == '\t' || c == '\r'; };
+    while ((from = structure.find(key, from)) != std::string_view::npos && from < end) {
+        std::size_t before = from;
+        while (before > 0 && blank(structure[before - 1])) --before;
+        std::size_t after = from + key.size();
+        while (after < structure.size() && blank(structure[after])) ++after;
+        if ((before == 0 || structure[before - 1] == '\n') && after < structure.size() && structure[after] == '=') return from;
+        from += key.size();
+    }
+    return std::string_view::npos;
+}
+
 }  // namespace
 
 std::string ProfileSerializer::toToml(const Keymap& keymap)
@@ -142,7 +159,7 @@ Keymap ProfileSerializer::fromToml(const std::string_view source)
             findLayerHeader(document, layerStart + layerHeader.size());
         const auto layerEnd =
             nextLayer == std::string_view::npos ? document.size() : nextLayer;
-        const auto assignment = document.find("scancodes", layerStart);
+        const auto assignment = findScanCodesKey(document, layerStart, layerEnd);
         if (assignment == std::string_view::npos || assignment >= layerEnd) {
             throw std::invalid_argument("profile layer has no scancodes array");
         }

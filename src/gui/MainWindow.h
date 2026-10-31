@@ -27,6 +27,8 @@ public:
     // Called with the files dropped on the window; the first .toml one is imported once nothing else is going on.
     void dropFiles(const std::vector<std::filesystem::path>& paths);
     [[nodiscard]] bool shouldClose() const { return close_; }
+    // A profile is being written to the keyboard.
+    [[nodiscard]] bool writing() const { return apply_.valid(); }
 private:
     enum class Action { None, Read, LoadFile, LoadBackup, SelectProfile, Discard, Close };
     enum class Dialog { None, Assign, Unsaved, Save, Defaults, Apply, Backups, CleanBackups };
