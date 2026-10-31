@@ -336,6 +336,16 @@ void tomlAcceptsTheFormsPeopleWrite()
     require(parsed.scanCode(0, 7) == 7 && parsed.scanCode(0, 119) == 119, "decimal codes were not read");
     require(parsed.scanCode(1, 0) == 0x00A0 && parsed.scanCode(3, 119) == 0x00A0, "an upper case 0X prefix was not read");
 
+    // A key whose name only contains the word is not the layer's codes.
+    std::string similar;
+    for (std::size_t layer = 0; layer < Keymap::layerCount; ++layer) {
+        similar += "[[layers]]\nold_scancodes = [";
+        for (std::size_t index = 0; index < Keymap::keysPerLayer; ++index) similar += "0x0001,";
+        similar += "]\nscancodes_note = 1\n" + layerTable(Keymap::keysPerLayer, "0x0002").substr(std::string("[[layers]]\n").size());
+    }
+    const auto chosen = hhkbs::keymap::ProfileSerializer::fromToml(similar);
+    require(chosen.scanCode(0, 0) == 0x0002 && chosen.scanCode(3, 119) == 0x0002, "a key named like scancodes was read as the codes");
+
     // Other tables and keys around the layers are left alone.
     const auto withExtras = "title = \"my profile\"\n\n" + document(Keymap::layerCount) + "[other]\nvalue = 1\n";
     require(!rejected(withExtras), "keys and tables other than the layers should be ignored");
