@@ -58,7 +58,8 @@ public:
 
     // Writes the current profile, reads it back and compares. If the write fails
     // or the read-back differs, `backup` is written back on a best-effort basis
-    // before the error is thrown.
+    // before the error is thrown. Nothing is written once the keyboard is on
+    // another profile than the one it was on when the write began.
     void writeCurrentProfile(
         const std::vector<std::uint8_t>& profile,
         const std::vector<std::uint8_t>& backup);
@@ -68,9 +69,10 @@ private:
     [[nodiscard]] std::vector<std::uint8_t> readData(
         std::uint16_t start,
         std::uint16_t length);
-    void writeData(std::uint16_t start, const std::vector<std::uint8_t>& data);
+    // Writes `data` while `profile` is active, and stops when it is not.
+    void writeData(std::uint16_t start, const std::vector<std::uint8_t>& data, std::uint16_t profile);
     [[nodiscard]] bool tryActivate(std::uint16_t profile);
-    [[nodiscard]] bool tryRestore(const std::vector<std::uint8_t>& backup);
+    [[nodiscard]] bool tryRestore(const std::vector<std::uint8_t>& backup, std::uint16_t profile);
 
     Transport& transport_;
 };

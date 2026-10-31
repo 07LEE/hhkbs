@@ -21,7 +21,8 @@ inline constexpr std::size_t maxBackupTagLength = 40;  // characters
 [[nodiscard]] std::filesystem::path backupDirectory();
 
 // Makes sure the folder exists. Folders made here can be entered by their owner only, since a backup holds the
-// keyboard's whole configuration. Throws std::filesystem::filesystem_error.
+// keyboard's whole configuration. A folder, or the folder it is in, that another user owns or can write to is refused;
+// one of this user's own that others can write to is made private first. Throws std::filesystem::filesystem_error.
 void ensureBackupDirectory(const std::filesystem::path& directory);
 
 // backup-YYYYmmdd-HHMMSS-profileN.toml, where N is the 1-based profile number. The time is local time.
@@ -30,8 +31,9 @@ void ensureBackupDirectory(const std::filesystem::path& directory);
 // A path in `directory` for a new backup of `profile` that nothing uses yet. A name sorts as newer than every backup
 // already there, whichever profile it is for: when the name for `when` is taken, or is not later than the newest one
 // (the clock was set back, or the local time repeated at the end of summer time), the time is moved on a second at a
-// time, so the name keeps its form and the newer backup still lists as newer. Throws when no free name is found or
-// the folder cannot be looked at.
+// time, so the name keeps its form and the newer backup still lists as newer. A newest backup more than a day ahead
+// of `when` is not followed, since it was made while the clock was wrong. Throws when no free name is found or the
+// folder cannot be looked at.
 [[nodiscard]] std::filesystem::path newBackupPath(const std::filesystem::path& directory, std::time_t when,
                                                   std::uint16_t profile);
 

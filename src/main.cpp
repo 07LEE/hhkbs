@@ -25,8 +25,11 @@
 #include <vector>
 
 namespace {
-volatile std::sig_atomic_t terminateRequested = 0;
-extern "C" void onTerminate(int) { terminateRequested = 1; }
+volatile std::sig_atomic_t terminateSignals = 0;  // how many termination signals have arrived, up to two
+extern "C" void onTerminate(int)
+{
+    if (terminateSignals < 2) terminateSignals = terminateSignals + 1;
+}
 
 struct FontFile {
     std::string path;
@@ -126,11 +129,12 @@ int main(int argc, char* argv[])
         } else { std::fprintf(stderr,"Unknown option: %s\n", argv[i]); return 1; }
     }
     // Ctrl-C, a logout or a terminal closing ask the window to close like its X button does, so a write to the keyboard
-    // is finished and unsaved work is asked about. A second signal takes the default action and ends the program.
+    // is finished and unsaved work is asked about. A second signal ends the program without asking, but not while the
+    // keyboard is being written: cut short, the write would leave a profile half written and could not be undone.
     struct sigaction onSignal{};
     onSignal.sa_handler = onTerminate;
     sigemptyset(&onSignal.sa_mask);
-    onSignal.sa_flags = SA_RESETHAND;
+    onSignal.sa_flags = 0;
     for (const int signal : {SIGINT, SIGTERM, SIGHUP}) ::sigaction(signal, &onSignal, nullptr);
     glfwSetErrorCallback([](int code, const char* message) { std::fprintf(stderr,"GLFW %d: %s\n",code,message); });
     if (!glfwInit()) return 1;
@@ -176,6 +180,7 @@ int main(int argc, char* argv[])
                 window->dropFiles(std::vector<std::filesystem::path>(paths, paths + count));
         });
         int frames = 0;
+        std::sig_atomic_t signalsSeen = 0;
         std::string lastDrawError;
         bool wasFocused = true;
         const auto start = std::chrono::steady_clock::now();
@@ -188,10 +193,11 @@ int main(int argc, char* argv[])
                 glfwSetWindowShouldClose(window.get(),GLFW_FALSE);
                 app.requestClose();
             }
-            if (terminateRequested) {
-                terminateRequested = 0;
+            if (const std::sig_atomic_t signals = terminateSignals; signals != signalsSeen) {
+                signalsSeen = signals;
                 app.requestClose();
             }
+            if (signalsSeen >= 2 && !app.writing()) break;
             // Follow the desktop's color scheme when the window regains focus.
             const bool focused = glfwGetWindowAttrib(window.get(),GLFW_FOCUSED) == GLFW_TRUE;
             if (focused && !wasFocused) theme::refresh();

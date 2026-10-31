@@ -285,6 +285,22 @@ int main() {
                 throw std::runtime_error("Folders made for backups can be entered by others");
             if (modeOf(base) == std::filesystem::perms::owner_all) throw std::runtime_error("A folder that was there before was changed");
             ensureBackupDirectory(target);  // again: nothing to do, nothing to fail
+
+            // A folder of one's own that others can write to, as umask 002 makes them, is made private and used.
+            const auto shared = directory / "shared" / "backups";
+            std::filesystem::create_directories(shared);
+            std::filesystem::permissions(shared, std::filesystem::perms::all);
+            std::filesystem::permissions(shared.parent_path(), std::filesystem::perms::all);
+            ensureBackupDirectory(shared);
+            if (modeOf(shared) != std::filesystem::perms::owner_all || modeOf(shared.parent_path()) != std::filesystem::perms::owner_all)
+                throw std::runtime_error("A backup folder of one's own that others can write to was not made private");
+
+            // A folder another user owns, as one made first in /tmp by somebody else could be, is refused.
+            if (::getuid() != 0) {
+                bool refused = false;
+                try { ensureBackupDirectory("/usr/share"); } catch (const std::filesystem::filesystem_error&) { refused = true; }
+                if (!refused) throw std::runtime_error("A backup folder another user owns was used");
+            }
         }
 
         // A name is never taken when the clock repeats, or when the folder cannot be looked at.
@@ -303,6 +319,14 @@ int main() {
             ::tzset();
             if (repeated.substr(7, 15) <= std::string("20261101-013000"))
                 throw std::runtime_error("A backup made after another was named as if it were older: " + repeated);
+
+            // A backup named far in the future, from a clock that was wrong, does not move the names after it.
+            const auto ahead = directory / "ahead";
+            std::filesystem::create_directories(ahead);
+            std::ofstream(ahead / "backup-20991231-120000-profile1.toml") << "x";
+            const std::time_t now = std::time(nullptr);
+            if (newBackupPath(ahead, now, 0).filename() != backupFileName(now, 0))
+                throw std::runtime_error("A backup named in the future moved the name of the next one");
 
             if (::geteuid() != 0) {
                 const auto locked = directory / "locked";
