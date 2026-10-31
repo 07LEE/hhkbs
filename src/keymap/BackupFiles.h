@@ -21,8 +21,8 @@ inline constexpr std::size_t maxBackupTagLength = 40;  // characters
 [[nodiscard]] std::filesystem::path backupDirectory();
 
 // Makes sure the folder exists. Folders made here can be entered by their owner only, since a backup holds the
-// keyboard's whole configuration. A folder, or the folder it is in, that another user owns or can write to is refused.
-// Throws std::filesystem::filesystem_error.
+// keyboard's whole configuration. A folder, or the folder it is in, that another user owns or can write to is refused;
+// one of this user's own that others can write to is made private first. Throws std::filesystem::filesystem_error.
 void ensureBackupDirectory(const std::filesystem::path& directory);
 
 // backup-YYYYmmdd-HHMMSS-profileN.toml, where N is the 1-based profile number. The time is local time.
