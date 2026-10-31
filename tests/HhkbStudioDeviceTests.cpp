@@ -202,6 +202,28 @@ void readBackFailureRestoresTheBackup()
             "an unconfirmed restore was reported as done, or the backup was not mentioned");
 }
 
+void switchDuringWriteLeavesTheOtherProfileAlone()
+{
+    StorageTransport transport;
+    HhkbStudioDevice device(transport);
+    const auto backup = device.readCurrentProfile();
+    const auto untouched = transport.stored.at(1);
+    // The profile is switched with the keyboard's own keys after the tenth chunk.
+    transport.beforeRequest = [](StorageTransport& keyboard, const Report& request) {
+        if (request[0] == 0x02 && keyboard.writes == 10 && keyboard.currentProfile == 2) {
+            keyboard.stored.at(keyboard.currentProfile) = keyboard.memory;
+            keyboard.currentProfile = 1;
+            keyboard.memory = keyboard.stored.at(1);
+        }
+    };
+
+    const auto error = raised<DeviceError>([&] { device.writeCurrentProfile(patternProfile(3), backup); });
+
+    require(mentions(error, "switched to profile 2"), "a switch during the write was not reported");
+    require(mentions(error, "could not be restored"), "the report says the previous profile was restored");
+    require(transport.memory == untouched, "the profile switched to was written or had the backup put into it");
+}
+
 void anActiveProfileOutOfRangeIsRejected()
 {
     StorageTransport transport;
@@ -707,6 +729,7 @@ int main()
         failedWriteRestoresBackup();
         mismatchedReadBackRestoresBackup();
         readBackFailureRestoresTheBackup();
+        switchDuringWriteLeavesTheOtherProfileAlone();
         anActiveProfileOutOfRangeIsRejected();
         writeTargetIsChecked();
         writeSurvivesFailedReturnToProfile();
