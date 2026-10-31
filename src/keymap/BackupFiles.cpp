@@ -43,12 +43,17 @@ namespace {
 
 // Refuses a backup folder, or the folder it is in, that another user made or can write to: a folder in /tmp could have
 // been made by anybody before this program got there, and whoever can write to it can change the backups. Run as root
-// (with sudo, in the home folder of the user who ran it) the owner is not looked at, only who else can write.
+// (with sudo, in the home folder of the user who ran it) the owner is not looked at, only who else can write. A folder
+// of this user's own that others can write to, as one made with umask 002 by an earlier version is, is made private.
 void requireOwnFolder(const std::filesystem::path& directory)
 {
     for (const auto& folder : {directory, directory.parent_path()}) {
         struct stat info{};
         if (folder.empty() || ::stat(folder.c_str(), &info) != 0) continue;
+        if (info.st_uid == ::getuid() && (info.st_mode & (S_IWGRP | S_IWOTH)) != 0) {
+            std::filesystem::permissions(folder, std::filesystem::perms::owner_all, std::filesystem::perm_options::replace);
+            if (::stat(folder.c_str(), &info) != 0) continue;
+        }
         if ((::getuid() != 0 && info.st_uid != ::getuid()) || (info.st_mode & (S_IWGRP | S_IWOTH)) != 0)
             throw std::filesystem::filesystem_error("The backup folder can be changed by another user", folder,
                                                     std::make_error_code(std::errc::permission_denied));

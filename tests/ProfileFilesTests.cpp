@@ -286,13 +286,21 @@ int main() {
             if (modeOf(base) == std::filesystem::perms::owner_all) throw std::runtime_error("A folder that was there before was changed");
             ensureBackupDirectory(target);  // again: nothing to do, nothing to fail
 
-            // A folder that others can write to, as one made first in /tmp by somebody else could be, is refused.
+            // A folder of one's own that others can write to, as umask 002 makes them, is made private and used.
             const auto shared = directory / "shared" / "backups";
             std::filesystem::create_directories(shared);
+            std::filesystem::permissions(shared, std::filesystem::perms::all);
             std::filesystem::permissions(shared.parent_path(), std::filesystem::perms::all);
-            bool refused = false;
-            try { ensureBackupDirectory(shared); } catch (const std::filesystem::filesystem_error&) { refused = true; }
-            if (!refused) throw std::runtime_error("A backup folder that others can write to was used");
+            ensureBackupDirectory(shared);
+            if (modeOf(shared) != std::filesystem::perms::owner_all || modeOf(shared.parent_path()) != std::filesystem::perms::owner_all)
+                throw std::runtime_error("A backup folder of one's own that others can write to was not made private");
+
+            // A folder another user owns, as one made first in /tmp by somebody else could be, is refused.
+            if (::getuid() != 0) {
+                bool refused = false;
+                try { ensureBackupDirectory("/usr/share"); } catch (const std::filesystem::filesystem_error&) { refused = true; }
+                if (!refused) throw std::runtime_error("A backup folder another user owns was used");
+            }
         }
 
         // A name is never taken when the clock repeats, or when the folder cannot be looked at.
